@@ -113,7 +113,7 @@ if __name__ == '__main__':
     tl.set_backend('pytorch')
 
     if args.train:
-        model = ModifiedVGG16Model().cuda()
+        model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
         trainer = Trainer(args.train_path, args.test_path, model, optimizer)
 
@@ -121,7 +121,10 @@ if __name__ == '__main__':
         torch.save(model, "model")
 
     if args.test:
-        model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
+        if args.decompose:
+            model = torch.load("decomposed_model")
+        else:
+            model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
         trainer = Trainer(args.train_path, args.test_path, model, optimizer)
 
@@ -129,7 +132,7 @@ if __name__ == '__main__':
         torch.save(model, "model")
 
     elif args.decompose:
-        model = torch.load("model").cuda()
+        model = models.vgg16(pretrained=True).cuda() # torch.load("model").cuda()
         model.eval()
         model.cpu()
         N = len(model.features._modules.keys())
