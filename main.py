@@ -94,6 +94,7 @@ class Trainer:
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", dest="train", action="store_true")
+    parser.add_argument("--test", dest="test", action="store_true")
     parser.add_argument("--decompose", dest="decompose", action="store_true")
     parser.add_argument("--fine_tune", dest="fine_tune", action="store_true")
     parser.add_argument("--train_path", type = str, default = "train")
@@ -117,6 +118,14 @@ if __name__ == '__main__':
         trainer = Trainer(args.train_path, args.test_path, model, optimizer)
 
         trainer.train(epoches = 10)
+        torch.save(model, "model")
+
+    if args.test:
+        model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
+        optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
+        trainer = Trainer(args.train_path, args.test_path, model, optimizer)
+
+        trainer.test()
         torch.save(model, "model")
 
     elif args.decompose:
