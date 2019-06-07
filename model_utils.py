@@ -23,6 +23,8 @@ def train_epoch(model, train_data_loader, optimizer, epoch, criterion=torch.nn.C
     model.cuda()
     model.train()
     for i, (batch, label) in enumerate(train_data_loader):
+        t0 = time.time()
+
         model.zero_grad()
         batch = batch.cuda()
         label = label.cuda()
@@ -40,6 +42,10 @@ def train_epoch(model, train_data_loader, optimizer, epoch, criterion=torch.nn.C
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        # measure elapsed time
+        t1 = time.time()
+        batch_time.update(t1 - t0)
 
         if i % print_freq == 0:
             progress.print(i)
