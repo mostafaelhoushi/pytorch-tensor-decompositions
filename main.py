@@ -25,6 +25,12 @@ def get_args():
     parser.add_argument("--test_path", type = str, default = "test")
     parser.add_argument("--cp", dest="cp", action="store_true", \
         help="Use cp decomposition. uses tucker by default")
+    parser.add_argument('-b', '--batch-size', default=256, type=int,
+                        metavar='N',
+                        help='mini-batch size (default: 256), this is the total '
+                            'batch size of all GPUs on the current node when '
+                            'using Data Parallel or Distributed Data Parallel')
+
     parser.set_defaults(train=False)
     parser.set_defaults(decompose=False)
     parser.set_defaults(fine_tune=False)
@@ -36,11 +42,12 @@ if __name__ == '__main__':
     args = get_args()
     tl.set_backend('pytorch')
 
+    train_data_loader = dataset.loader(args.train_path, args.batch_size)
+    test_data_loader = dataset.test_loader(args.test_path, args.batch_size)
+
     if args.train:
         model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
-        train_data_loader = dataset.loader(args.train_path)
-        test_data_loader = dataset.test_loader(args.test_path)
 
         train(model, train_data_loader, test_data_loader, optimizer, epochs=10)
         torch.save(model, "model")
@@ -51,7 +58,6 @@ if __name__ == '__main__':
         else:
             model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
-        test_data_loader = dataset.test_loader(args.test_path)
         
         test(model, test_data_loader)
         torch.save(model, "model")

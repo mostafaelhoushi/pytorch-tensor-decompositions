@@ -8,7 +8,7 @@ def train(model, train_data_loader, test_data_loader, optimizer, epochs=10, crit
         print("Epoch: ", i)
         train_epoch(model, train_data_loader, optimizer, i, criterion)
         test(model, test_data_loader)
-    print("Finished fine tuning.")
+    print("Finished training.")
 
 
 def train_epoch(model, train_data_loader, optimizer, epoch, criterion=torch.nn.CrossEntropyLoss(), print_freq=10):
