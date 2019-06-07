@@ -1,5 +1,4 @@
 import torch
-from torch.autograd import Variable
 from torchvision import models
 import sys
 import numpy as np
@@ -10,86 +9,11 @@ import torch.optim as optim
 import dataset
 import argparse
 from operator import itemgetter
-import time
 import tensorly as tl
 import tensorly
 from itertools import chain
 from decompositions import cp_decomposition_conv_layer, tucker_decomposition_conv_layer
-
-# VGG16 based network for classifying between dogs and cats.
-# After training this will be an over parameterized network,
-# with potential to shrink it.
-class ModifiedVGG16Model(torch.nn.Module):
-    def __init__(self, model=None):
-        super(ModifiedVGG16Model, self).__init__()
-
-        model = models.vgg16(pretrained=True)
-        self.features = model.features
-
-        self.classifier = nn.Sequential(
-            nn.Dropout(),
-            nn.Linear(25088, 4096),
-            nn.ReLU(inplace=True),
-            nn.Dropout(),
-            nn.Linear(4096, 4096),
-            nn.ReLU(inplace=True),
-            nn.Linear(4096, 2))
-
-    def forward(self, x):
-        x = self.features(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
-class Trainer:
-    def __init__(self, train_path, test_path, model, optimizer):
-        self.train_data_loader = dataset.loader(train_path)
-        self.test_data_loader = dataset.test_loader(test_path)
-
-        self.optimizer = optimizer
-
-        self.model = model
-        self.criterion = torch.nn.CrossEntropyLoss()
-        self.model.train()
-
-    def test(self):
-        self.model.cuda()
-        self.model.eval()
-        correct = 0
-        total = 0
-        total_time = 0
-        for i, (batch, label) in enumerate(self.test_data_loader):
-            batch = batch.cuda()
-            t0 = time.time()
-            output = model(Variable(batch)).cpu()
-            t1 = time.time()
-            total_time = total_time + (t1 - t0)
-            pred = output.data.max(1)[1]
-            correct += pred.cpu().eq(label).sum()
-            total += label.size(0)
-        
-        print("Accuracy :", float(correct) / total)
-        print("Average prediction time", float(total_time) / (i + 1), i + 1)
-
-        self.model.train()
-
-    def train(self, epoches=10):
-        for i in range(epoches):
-            print("Epoch: ", i)
-            self.train_epoch()
-            self.test()
-        print("Finished fine tuning.")
-        
-
-    def train_batch(self, batch, label):
-        self.model.zero_grad()
-        input = Variable(batch)
-        self.criterion(self.model(input), Variable(label)).backward()
-        self.optimizer.step()
-
-    def train_epoch(self):
-        for i, (batch, label) in enumerate(self.train_data_loader):
-            self.train_batch(batch.cuda(), label.cuda())
+from model_utils import train, test
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -115,9 +39,10 @@ if __name__ == '__main__':
     if args.train:
         model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
-        trainer = Trainer(args.train_path, args.test_path, model, optimizer)
+        train_data_loader = dataset.loader(args.train_path)
+        test_data_loader = dataset.test_loader(args.test_path)
 
-        trainer.train(epoches = 10)
+        train(model, train_data_loader, test_data_loader, optimizer, epochs=10)
         torch.save(model, "model")
 
     if args.test:
@@ -126,9 +51,9 @@ if __name__ == '__main__':
         else:
             model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
-        trainer = Trainer(args.train_path, args.test_path, model, optimizer)
-
-        trainer.test()
+        test_data_loader = dataset.test_loader(args.test_path)
+        
+        test(model, test_data_loader)
         torch.save(model, "model")
 
     elif args.decompose:
@@ -170,12 +95,14 @@ if __name__ == '__main__':
             #     model.classifier.parameters()), lr=0.01)
             optimizer = optim.SGD(model.parameters(), lr=0.001)
 
+        train_data_loader = dataset.loader(args.train_path)
+        test_data_loader = dataset.test_loader(args.test_path)
 
-        trainer = Trainer(args.train_path, args.test_path, model, optimizer)
+        train(model, train_data_loader, test_data_loader, optimizer, epochs=10)
 
-        trainer.test()
+        test(model, test_data_loader)
         model.cuda()
         model.train()
-        trainer.train(epoches=100)
+        train(model, train_data_loader, test_data_loader, optimizer, epochs=100)
         model.eval()
-        trainer.test()
+        test(model, test_data_loader)
