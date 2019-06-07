@@ -101,14 +101,13 @@ if __name__ == '__main__':
             #     model.classifier.parameters()), lr=0.01)
             optimizer = optim.SGD(model.parameters(), lr=0.001)
 
-        train_data_loader = dataset.loader(args.train_path)
-        test_data_loader = dataset.test_loader(args.test_path)
-
         train(model, train_data_loader, test_data_loader, optimizer, epochs=10)
+        torch.save(model, 'fine_tuned_model')
 
         test(model, test_data_loader)
         model.cuda()
         model.train()
         train(model, train_data_loader, test_data_loader, optimizer, epochs=100)
+        torch.save(model, 'fine_tuned_model1')
         model.eval()
         test(model, test_data_loader)
