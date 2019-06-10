@@ -12,7 +12,7 @@ from operator import itemgetter
 import tensorly as tl
 import tensorly
 from itertools import chain
-from decompositions import cp_decomposition_conv_layer, tucker_decomposition_conv_layer
+from decompositions import decompose_model, cp_decomposition_conv_layer, tucker_decomposition_conv_layer
 from model_utils import train, test
 
 def get_args():
@@ -67,22 +67,9 @@ if __name__ == '__main__':
         model = models.vgg16(pretrained=True).cuda() # torch.load("model").cuda()
         model.eval()
         model.cpu()
-        N = len(model.features._modules.keys())
-        for i, key in enumerate(model.features._modules.keys()):
-
-            if i >= N - 2:
-                break
-            if isinstance(model.features._modules[key], torch.nn.modules.conv.Conv2d):
-                conv_layer = model.features._modules[key]
-                if args.cp:
-                    rank = max(conv_layer.weight.data.numpy().shape)//3
-                    decomposed = cp_decomposition_conv_layer(conv_layer, rank)
-                else:
-                    decomposed = tucker_decomposition_conv_layer(conv_layer)
-
-                model.features._modules[key] = decomposed
-
-            torch.save(model, "decomposed_model.pth")
+        model = decompose_model(model, args.cp)
+        
+        torch.save(model, "decomposed_model.pth")
 
 
     elif args.fine_tune:
@@ -101,8 +88,6 @@ if __name__ == '__main__':
         if args.cp:
             optimizer = optim.SGD(model.parameters(), lr=0.000001)
         else:
-            # optimizer = optim.SGD(chain(model.features.parameters(), \
-            #     model.classifier.parameters()), lr=0.01)
             optimizer = optim.SGD(model.parameters(), lr=0.001)
 
         train(model, train_data_loader, test_data_loader, optimizer, epochs=10)

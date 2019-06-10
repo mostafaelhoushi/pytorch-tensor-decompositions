@@ -5,6 +5,25 @@ import torch
 import torch.nn as nn
 from VBMF import VBMF
 
+def decompose_model(model, cp=False):
+    for name, module in reversed(model._modules.items()):
+        #if i >= N - 2:
+        #    break
+        if len(list(module.children())) > 0:
+            # recurse
+            model._modules[name] = decompose_model(model=module, cp=cp)
+        if type(module) == nn.Conv2d :
+            conv_layer = module
+            if cp:
+                rank = max(conv_layer.weight.data.numpy().shape)//3
+                decomposed = cp_decomposition_conv_layer(conv_layer, rank)
+            else:
+                decomposed = tucker_decomposition_conv_layer(conv_layer)
+
+            model._modules[name] = decomposed
+
+    return model
+
 def cp_decomposition_conv_layer(layer, rank):
     """ Gets a conv layer and a target rank, 
         returns a nn.Sequential object with the decomposition """
@@ -91,7 +110,8 @@ def tucker_decomposition_conv_layer(layer):
         out_channels=last.shape[0], kernel_size=1, stride=1,
         padding=0, dilation=layer.dilation, bias=True)
 
-    last_layer.bias.data = layer.bias.data
+    if layer.bias is not None:
+        last_layer.bias.data = layer.bias.data
 
     first_layer.weight.data = \
         torch.transpose(first, 1, 0).unsqueeze(-1).unsqueeze(-1)
