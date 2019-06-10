@@ -59,7 +59,6 @@ if __name__ == '__main__':
             model = torch.load("decomposed_model.pth")
         else:
             model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
-        optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
         
         test(model, test_data_loader)
         torch.save(model, "model.pth")
