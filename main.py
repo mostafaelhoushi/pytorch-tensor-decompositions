@@ -25,11 +25,11 @@ def get_args():
     parser.add_argument("--test_path", type = str, default = "test")
     parser.add_argument("--cp", dest="cp", action="store_true", \
         help="Use cp decomposition. uses tucker by default")
-    parser.add_argument('-b', '--batch-size', default=256, type=int,
-                        metavar='N',
-                        help='mini-batch size (default: 256), this is the total '
-                            'batch size of all GPUs on the current node when '
-                            'using Data Parallel or Distributed Data Parallel')
+    parser.add_argument("-b", "--batch-size", default=256, type=int,
+                        metavar="N",
+                        help="mini-batch size (default: 256), this is the total "
+                            "batch size of all GPUs on the current node when "
+                            "using Data Parallel or Distributed Data Parallel")
 
     parser.set_defaults(train=False)
     parser.set_defaults(decompose=False)
@@ -40,7 +40,7 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
-    tl.set_backend('pytorch')
+    tl.set_backend("pytorch")
 
     train_data_loader = dataset.loader(args.train_path, args.batch_size)
     test_data_loader = dataset.test_loader(args.test_path, args.batch_size)
@@ -50,17 +50,17 @@ if __name__ == '__main__':
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
 
         train(model, train_data_loader, test_data_loader, optimizer, epochs=10)
-        torch.save(model, "model")
+        torch.save(model, "model.pth")
 
     if args.test:
         if args.decompose:
-            model = torch.load("decomposed_model")
+            model = torch.load("decomposed_model.pth")
         else:
             model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
         
         test(model, test_data_loader)
-        torch.save(model, "model")
+        torch.save(model, "model.pth")
 
     elif args.decompose:
         model = models.vgg16(pretrained=True).cuda() # torch.load("model").cuda()
@@ -81,11 +81,11 @@ if __name__ == '__main__':
 
                 model.features._modules[key] = decomposed
 
-            torch.save(model, 'decomposed_model')
+            torch.save(model, "decomposed_model.pth")
 
 
     elif args.fine_tune:
-        base_model = torch.load("decomposed_model")
+        base_model = torch.load("decomposed_model.pth")
         model = torch.nn.DataParallel(base_model)
 
         for param in model.parameters():
@@ -102,12 +102,12 @@ if __name__ == '__main__':
             optimizer = optim.SGD(model.parameters(), lr=0.001)
 
         train(model, train_data_loader, test_data_loader, optimizer, epochs=10)
-        torch.save(model, 'fine_tuned_model')
+        torch.save(model, 'fine_tuned_model.pth')
 
         test(model, test_data_loader)
         model.cuda()
         model.train()
         train(model, train_data_loader, test_data_loader, optimizer, epochs=100)
-        torch.save(model, 'fine_tuned_model1')
+        torch.save(model, 'fine_tuned_model1.pth')
         model.eval()
         test(model, test_data_loader)

@@ -8,6 +8,7 @@ def train(model, train_data_loader, test_data_loader, optimizer, epochs=10, crit
         print("Epoch: ", i)
         train_epoch(model, train_data_loader, optimizer, i, criterion)
         test(model, test_data_loader)
+        torch.save(model, "checkpoint.pth")
     print("Finished training.")
 
 
