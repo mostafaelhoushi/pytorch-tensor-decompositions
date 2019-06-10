@@ -42,10 +42,10 @@ if __name__ == '__main__':
     args = get_args()
     tl.set_backend("pytorch")
 
-    train_data_loader = dataset.loader(args.train_path, args.batch_size)
-    test_data_loader = dataset.test_loader(args.test_path, args.batch_size)
-
     if args.train:
+        train_data_loader = dataset.loader(args.train_path, args.batch_size)
+        test_data_loader = dataset.test_loader(args.test_path, args.batch_size)
+    
         model = models.vgg16(pretrained=True).cuda() # ModifiedVGG16Model().cuda()
         optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
 
@@ -53,6 +53,8 @@ if __name__ == '__main__':
         torch.save(model, "model.pth")
 
     if args.test:
+        test_data_loader = dataset.test_loader(args.test_path, args.batch_size)
+        
         if args.decompose:
             model = torch.load("decomposed_model.pth")
         else:
@@ -85,6 +87,9 @@ if __name__ == '__main__':
 
 
     elif args.fine_tune:
+        train_data_loader = dataset.loader(args.train_path, args.batch_size)
+        test_data_loader = dataset.test_loader(args.test_path, args.batch_size)
+        
         base_model = torch.load("decomposed_model.pth")
         model = torch.nn.DataParallel(base_model)
 
