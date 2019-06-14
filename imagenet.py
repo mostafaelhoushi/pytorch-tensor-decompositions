@@ -231,11 +231,11 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # name model directory
     if (args.decompose):
-        decompose_label = "_decompose"
+        decompose_label = "tucker_decompose"
         if (args.cp):
-            decompose_label += "_cp"
+            decompose_label += "cp_decompose"
     else:
-        decompose_label = ""
+        decompose_label = "no_decompose"
 
     if args.desc is not None and len(args.desc) > 0:
         model_name = '%s/%s_%s' % (args.arch, args.desc, decompose_label)
