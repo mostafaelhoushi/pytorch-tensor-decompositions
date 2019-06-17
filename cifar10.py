@@ -194,20 +194,58 @@ def main_worker(gpu, ngpus_per_node, args):
             model = models.__dict__[args.arch](pretrained=True)
         else:
             raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
-			
+
+    #TODO: add option for finetune vs. feature extraction that only work if pretrained weights are imagenet    
     if args.pretrained != "none":
         if args.freeze:
             for param in model.parameters():
                 param.requires_grad = False
 
-    if not args.arch.startswith("resnet"):
+    num_classes = 10
+    # Parameters of newly constructed modules have requires_grad=True by default
+    # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
+    if args.arch.startswith("resnet"):
+        # TODO: handle if model came from imagenet or cifar10
         # change FC layer to accomodate dataset labels
+        '''
         num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 10) # Parameters of newly constructed modules have requires_grad=True by default
-        # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
+        model.fc = nn.Linear(num_ftrs, num_classes)
+        ''' 
+    elif args.arch == "alexnet":
+        num_ftrs = model.classifier[6].in_features
+        model.classifier[6] = nn.Linear(num_ftrs,num_classes)
+    elif args.arch == "vgg11_bn":
+        num_ftrs = model.classifier[6].in_features
+        model.classifier[6] = nn.Linear(num_ftrs,num_classes)
+    elif args.arch == "squeezenet1_0":
+        model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
+        model.num_classes = num_classes
+    elif args.arch == "densenet121":
+        num_ftrs = model.classifier.in_features
+        model.classifier = nn.Linear(num_ftrs, num_classes)
+    elif args.arch == "inception_v3":
+        # Handle the auxilary net
+        num_ftrs = model.AuxLogits.fc.in_features
+        model.AuxLogits.fc = nn.Linear(num_ftrs, num_classes)
+        # Handle the primary net
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs,num_classes)
+    else:
+        raise ValueError("Unfortunately ", args.arch, " is not yet supported for CIFAR10")
+
+    print("Original Model:")
+    print(model)
+    print("\n\n")
+        
 
     if args.decompose:
+        print("Decompsing...")
         model = decompose_model(model, args.cp)
+        print("\n\n")
+
+        print("Decompose Model:")
+        print(model)
+        print("\n\n")
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
