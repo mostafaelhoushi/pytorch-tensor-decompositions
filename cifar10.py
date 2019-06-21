@@ -51,11 +51,13 @@ model_names.extend(sorted(name for name in resnet_cifar10.__dict__
                      and callable(resnet_cifar10.__dict__[name])))
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
+parser.add_argument('-a', '--arch', metavar='ARCH', default='',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
+parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
+                    help='path to model file to load both its architecture and weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
@@ -79,9 +81,11 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
+parser.add_argument('--opt-ckpt', default='', type=str, metavar='OPT_PATH',
+                    help='path to checkpoint file to load optimizer state (default: none)')
 parser.add_argument('-p', '--print-freq', default=50, type=int,
                     metavar='N', help='print frequency (default: 50)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
+parser.add_argument('--resume', default='', type=str, metavar='CHECKPOINT_PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='only evaluate model on validation set')
@@ -166,8 +170,12 @@ def main_worker(gpu, ngpus_per_node, args):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
-    # create model
-    if args.arch.startswith("resnet") and args.pretrained != "imagenet":
+    # create or load model
+    if args.model:
+        if args.arch or (args.pretrained and args.pretrained != "none"):
+            print("WARNING: Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
+        model = torch.load(args.model)
+    elif args.arch.startswith("resnet") and args.pretrained != "imagenet":
         if args.pretrained == "none": 
             model = resnet_cifar10.__dict__[args.arch]()
         elif args.pretrained == "cifar10":
@@ -196,42 +204,42 @@ def main_worker(gpu, ngpus_per_node, args):
             raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
 
     #TODO: add option for finetune vs. feature extraction that only work if pretrained weights are imagenet    
-    if args.pretrained != "none":
-        if args.freeze:
-            for param in model.parameters():
-                param.requires_grad = False
+    if args.freeze and args.pretrained != "none":
+        for param in model.parameters():
+            param.requires_grad = False
 
     num_classes = 10
-    # Parameters of newly constructed modules have requires_grad=True by default
-    # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
-    if args.arch.startswith("resnet"):
-        # TODO: handle if model came from imagenet or cifar10
-        # change FC layer to accomodate dataset labels
-        '''
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, num_classes)
-        ''' 
-    elif args.arch == "alexnet":
-        num_ftrs = model.classifier[6].in_features
-        model.classifier[6] = nn.Linear(num_ftrs,num_classes)
-    elif args.arch == "vgg11_bn":
-        num_ftrs = model.classifier[6].in_features
-        model.classifier[6] = nn.Linear(num_ftrs,num_classes)
-    elif args.arch == "squeezenet1_0":
-        model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
-        model.num_classes = num_classes
-    elif args.arch == "densenet121":
-        num_ftrs = model.classifier.in_features
-        model.classifier = nn.Linear(num_ftrs, num_classes)
-    elif args.arch == "inception_v3":
-        # Handle the auxilary net
-        num_ftrs = model.AuxLogits.fc.in_features
-        model.AuxLogits.fc = nn.Linear(num_ftrs, num_classes)
-        # Handle the primary net
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs,num_classes)
-    else:
-        raise ValueError("Unfortunately ", args.arch, " is not yet supported for CIFAR10")
+    if not args.model:
+        # Parameters of newly constructed modules have requires_grad=True by default
+        # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
+        if args.arch.startswith("resnet"):
+            # TODO: handle if model came from imagenet or cifar10
+            # change FC layer to accomodate dataset labels
+            '''
+            num_ftrs = model.fc.in_features
+            model.fc = nn.Linear(num_ftrs, num_classes)
+            ''' 
+        elif args.arch == "alexnet":
+            num_ftrs = model.classifier[6].in_features
+            model.classifier[6] = nn.Linear(num_ftrs,num_classes)
+        elif args.arch == "vgg11_bn":
+            num_ftrs = model.classifier[6].in_features
+            model.classifier[6] = nn.Linear(num_ftrs,num_classes)
+        elif args.arch == "squeezenet1_0":
+            model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
+            model.num_classes = num_classes
+        elif args.arch == "densenet121":
+            num_ftrs = model.classifier.in_features
+            model.classifier = nn.Linear(num_ftrs, num_classes)
+        elif args.arch == "inception_v3":
+            # Handle the auxilary net
+            num_ftrs = model.AuxLogits.fc.in_features
+            model.AuxLogits.fc = nn.Linear(num_ftrs, num_classes)
+            # Handle the primary net
+            num_ftrs = model.fc.in_features
+            model.fc = nn.Linear(num_ftrs,num_classes)
+        else:
+            raise ValueError("Unfortunately ", args.arch, " is not yet supported for CIFAR10")
 
     print("Original Model:")
     print(model)
@@ -239,7 +247,7 @@ def main_worker(gpu, ngpus_per_node, args):
         
 
     if args.decompose:
-        print("Decompsing...")
+        print("Decomposing...")
         model = decompose_model(model, args.cp)
         print("\n\n")
 
@@ -279,13 +287,24 @@ def main_worker(gpu, ngpus_per_node, args):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    if args.opt_ckpt:
+        print("WARNING: Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
 
-    if (args.lr_schedule):
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                            milestones=[100, 150], last_epoch=args.start_epoch - 1)
+        checkpoint = torch.load(args.opt_ckpt)
+        optimizer = checkpoint['optimizer']
+        if 'lr_schedule' in checkpoint:
+            lr_scheduler = checkpoint['lr_schedule']
+        else:
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
+    else:
+        optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+
+        if (args.lr_schedule):
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
 
     if args.arch in ['resnet1202', 'resnet110']:
         # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
@@ -305,6 +324,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 best_acc1 = best_acc1.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -424,22 +444,20 @@ def main_worker(gpu, ngpus_per_node, args):
 
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                     and args.rank % ngpus_per_node == 0):
-                try:
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'model': model,
-                        'best_acc1': best_acc1,
-                        'optimizer' : optimizer,
-                    }, is_best, model_dir)
-                except: 
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'state_dict': model.state_dict(),
-                        'best_acc1': best_acc1,
-                        'optimizer' : optimizer.state_dict(),
-                    }, is_best, model_dir)
+                if is_best:
+                    try:
+                        torch.save(model, os.path.join(model_dir, "model.pth"))
+                    except: 
+                        print("WARNING: Unable to save model.pth")
+                
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': args.arch,
+                    'state_dict': model.state_dict(),
+                    'best_acc1': best_acc1,
+                    'optimizer' : optimizer.state_dict(),
+                    'lr_scheduler' : lr_scheduler,
+                }, is_best, model_dir)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
