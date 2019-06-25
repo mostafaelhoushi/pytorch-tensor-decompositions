@@ -89,7 +89,7 @@ parser.add_argument('--resume', default='', type=str, metavar='CHECKPOINT_PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='only evaluate model on validation set')
-parser.add_argument('--pretrained', dest='pretrained', default="none", choices=["none", "imagenet", "cifar10"], 
+parser.add_argument('--pretrained', dest='pretrained', default="none", 
                     help='choose whether model is not pre-trained, or pre-trained on ImageNet, or on CIFAR10')
 parser.add_argument('--freeze', dest='freeze', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='freeze pre-trained weights')
@@ -174,7 +174,15 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.model:
         if args.arch or (args.pretrained and args.pretrained != "none"):
             print("WARNING: Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
-        model = torch.load(args.model)
+        model = None
+        saved_checkpoint = torch.load(args.model)
+        if isinstance(saved_checkpoint, nn.Module):
+            model = saved_checkpoint
+        elif "model" in saved_checkpoint:
+            model = saved_checkpoint["model"]
+        else:
+            raise Exception("Unable to load model from " + args.model)
+        
     elif args.arch.startswith("resnet") and args.pretrained != "imagenet":
         if args.pretrained == "none": 
             model = resnet_cifar10.__dict__[args.arch]()
@@ -200,6 +208,21 @@ def main_worker(gpu, ngpus_per_node, args):
             model = models.__dict__[args.arch]()
         elif args.pretrained == "imagenet":
             model = models.__dict__[args.arch](pretrained=True)
+        elif os.path.exists(args.pretrained):
+            model = models.__dict__[args.arch]()
+            state_dict = None
+            
+            saved_checkpoint = torch.load(args.pretrained)
+            if "state_dict" in saved_checkpoint:
+                state_dict = saved_checkpoint["state_dict"]
+            elif "model" in saved_checkpoint:
+                model = saved_checkpoint["model"]
+                state_dict = model.state_dict()
+            else:
+                state_dict = saved_checkpoint
+						
+			# load params
+            model.load_state_dict(state_dict)
         else:
             raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
 
