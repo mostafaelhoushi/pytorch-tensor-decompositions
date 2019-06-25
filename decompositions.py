@@ -90,6 +90,11 @@ def tucker_decomposition_conv_layer(layer):
 
     ranks = estimate_ranks(layer)
     print(layer, "VBMF Estimated ranks", ranks)
+
+    if (any(r <= 0 for r in ranks)):
+        print("One of the estimated ranks is 0 or less. Skipping layer")
+        return layer
+
     core, [last, first] = \
         partial_tucker(layer.weight.data, \
             modes=[0, 1], ranks=ranks, init='svd')
