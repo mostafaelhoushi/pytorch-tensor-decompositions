@@ -6,6 +6,7 @@ import torch.nn as nn
 from VBMF import VBMF
 
 def decompose_model(model, cp=False):
+    model.cpu()
     for name, module in reversed(model._modules.items()):
         #if i >= N - 2:
         #    break
