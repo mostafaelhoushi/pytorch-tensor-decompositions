@@ -317,7 +317,7 @@ def main_worker(gpu, ngpus_per_node, args):
         optimizer = checkpoint['optimizer']
         if 'lr_schedule' in checkpoint:
             lr_scheduler = checkpoint['lr_schedule']
-        else:
+        elif (args.lr_schedule):
             lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                                 milestones=[100, 150], last_epoch=args.start_epoch - 1)
     else:
@@ -347,7 +347,8 @@ def main_worker(gpu, ngpus_per_node, args):
                 best_acc1 = best_acc1.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            if 'lr_schedule' in checkpoint:
+                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
