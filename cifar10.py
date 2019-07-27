@@ -183,24 +183,28 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             raise Exception("Unable to load model from " + args.model)
         
-    elif args.arch.startswith("resnet") and args.pretrained != "imagenet":
+    # TODO: Clean up this code. Create separate function to load each CIFAR10 version of a model. And then load its weights if needed
+    elif args.arch in ["resnet20", "resnet32", "resnet44", "resnet56", "resnet110", "resnet1202", "vgg11_bn"] and args.pretrained != "imagenet":
         if args.pretrained == "none": 
             model = resnet_cifar10.__dict__[args.arch]()
         elif args.pretrained == "cifar10":
-            model = resnet_cifar10.__dict__[args.arch]()
-			
-            # original saved file with DataParallel
-            saved_checkpoint = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
-            state_dict = saved_checkpoint["state_dict"]
-			
-            # create new OrderedDict that does not contain module.
-            new_state_dict = OrderedDict()
-            for k, v in state_dict.items():
-                name = k[7:] # remove module.
-                new_state_dict[name] = v
-			
-			# load params
-            model.load_state_dict(new_state_dict)		
+            if args.arch.startswith("resnet"):
+                model = resnet_cifar10.__dict__[args.arch]()
+                
+                # original saved file with DataParallel
+                saved_checkpoint = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
+                state_dict = saved_checkpoint["state_dict"]
+                
+                # create new OrderedDict that does not contain module.
+                new_state_dict = OrderedDict()
+                for k, v in state_dict.items():
+                    name = k[7:] # remove module.
+                    new_state_dict[name] = v
+                
+                # load params
+                model.load_state_dict(new_state_dict)
+            elif args.arch in ["vgg11_bn"]:
+                model = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
         else:
             raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
     else:
@@ -248,6 +252,15 @@ def main_worker(gpu, ngpus_per_node, args):
         elif args.arch == "vgg11_bn":
             num_ftrs = model.classifier[6].in_features
             model.classifier[6] = nn.Linear(num_ftrs,num_classes)
+        elif args.arch == "vgg16":
+            model.classifier = nn.Sequential(
+                nn.Dropout(),
+                nn.Linear(25088, 4096),
+                nn.ReLU(inplace=True),
+                nn.Dropout(),
+                nn.Linear(4096, 4096),
+                nn.ReLU(inplace=True),
+                nn.Linear(4096, num_classes))
         elif args.arch == "squeezenet1_0":
             model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
             model.num_classes = num_classes
@@ -263,20 +276,6 @@ def main_worker(gpu, ngpus_per_node, args):
             model.fc = nn.Linear(num_ftrs,num_classes)
         else:
             raise ValueError("Unfortunately ", args.arch, " is not yet supported for CIFAR10")
-
-    print("Original Model:")
-    print(model)
-    print("\n\n")
-        
-
-    if args.decompose:
-        print("Decomposing...")
-        model = decompose_model(model, args.cp)
-        print("\n\n")
-
-        print("Decompose Model:")
-        print(model)
-        print("\n\n")
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -353,6 +352,20 @@ def main_worker(gpu, ngpus_per_node, args):
                   .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+
+    print("Original Model:")
+    print(model)
+    print("\n\n")
+        
+
+    if args.decompose:
+        print("Decomposing...")
+        model = decompose_model(model, args.cp)
+        print("\n\n")
+
+        print("Decompose Model:")
+        print(model)
+        print("\n\n")
 
     cudnn.benchmark = True
 
@@ -442,7 +455,9 @@ def main_worker(gpu, ngpus_per_node, args):
             train_log_csv = csv.writer(train_log_file)
             train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_time'])
 
-        for epoch in range(args.start_epoch, args.epochs):
+        print(args.start_epoch, " ", args.epochs)
+
+        for epoch in range(args.start_epoch, args.start_epoch + args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
             adjust_learning_rate(optimizer, epoch, args)
