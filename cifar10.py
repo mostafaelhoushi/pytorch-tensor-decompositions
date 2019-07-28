@@ -184,7 +184,7 @@ def main_worker(gpu, ngpus_per_node, args):
             raise Exception("Unable to load model from " + args.model)
         
     # TODO: Clean up this code. Create separate function to load each CIFAR10 version of a model. And then load its weights if needed
-    elif args.arch in ["resnet20", "resnet32", "resnet44", "resnet56", "resnet110", "resnet1202", "vgg11_bn"] and args.pretrained != "imagenet":
+    elif args.arch in ["resnet20", "resnet32", "resnet44", "resnet56", "resnet110", "resnet1202", "vgg11_bn", "vgg16"] and args.pretrained != "imagenet":
         if args.pretrained == "none": 
             model = resnet_cifar10.__dict__[args.arch]()
         elif args.pretrained == "cifar10":
@@ -203,7 +203,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 
                 # load params
                 model.load_state_dict(new_state_dict)
-            elif args.arch in ["vgg11_bn"]:
+            elif args.arch in ["vgg11_bn", "vgg16"]:
                 model = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
         else:
             raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
@@ -236,16 +236,14 @@ def main_worker(gpu, ngpus_per_node, args):
             param.requires_grad = False
 
     num_classes = 10
-    if not args.model:
+    if args.pretrained != "cifar10" and not args.model:
         # Parameters of newly constructed modules have requires_grad=True by default
         # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
         if args.arch.startswith("resnet"):
             # TODO: handle if model came from imagenet or cifar10
             # change FC layer to accomodate dataset labels
-            '''
             num_ftrs = model.fc.in_features
             model.fc = nn.Linear(num_ftrs, num_classes)
-            ''' 
         elif args.arch == "alexnet":
             num_ftrs = model.classifier[6].in_features
             model.classifier[6] = nn.Linear(num_ftrs,num_classes)
@@ -300,10 +298,11 @@ def main_worker(gpu, ngpus_per_node, args):
         model = model.cuda(args.gpu)
     else:
         # DataParallel will divide and allocate batch_size to all available GPUs
-        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
+        if args.arch.startswith('alexnet') or args.arch.startswith('vgg') and args.arch != "vgg16": # TODO: remove this hack. Had to add it to get the CIFAR10 VGG16 I got to work
+                model.features = torch.nn.DataParallel(model.features)
+                model.cuda()
         else:
+            print(model)
             model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
@@ -345,8 +344,11 @@ def main_worker(gpu, ngpus_per_node, args):
                 # best_acc1 may be from a checkpoint from a different GPU
                 best_acc1 = best_acc1.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            if 'lr_schedule' in checkpoint:
+            try:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+            except:
+                optimizer = checkpoint["optimizer"]
+            if 'lr_scheduler' in checkpoint:
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
@@ -488,15 +490,25 @@ def main_worker(gpu, ngpus_per_node, args):
                         torch.save(model, os.path.join(model_dir, "model.pth"))
                     except: 
                         print("WARNING: Unable to save model.pth")
-                
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': args.arch,
-                    'state_dict': model.state_dict(),
-                    'best_acc1': best_acc1,
-                    'optimizer' : optimizer.state_dict(),
-                    'lr_scheduler' : lr_scheduler,
-                }, is_best, model_dir)
+
+                try:
+                    save_checkpoint({
+                        'epoch': epoch + 1,
+                        'arch': args.arch,
+                        'model': model,
+                        'best_acc1': best_acc1,
+                        'optimizer' : optimizer,
+                        'lr_scheduler' : lr_scheduler,
+                    }, is_best, model_dir)
+                except: 
+                    save_checkpoint({
+                        'epoch': epoch + 1,
+                        'arch': args.arch,
+                        'state_dict': model.state_dict(),
+                        'best_acc1': best_acc1,
+                        'optimizer' : optimizer.state_dict(),
+                        'lr_scheduler' : lr_scheduler,
+                    }, is_best, model_dir)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
