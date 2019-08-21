@@ -27,7 +27,12 @@ import copy
 
 import tensorly as tl
 import tensorly
-from decompositions import decompose_model
+#from decompositions import decompose_model
+from decomp_OTHER import est_rank, tucker_rank
+from torch_cp_decomp_OTHER import torch_cp_decomp
+from torch_tucker_OTHER import tucker_decomp
+from decomp_resnet50_OTHER import decomp_resnet
+from decomp_alexnet_OTHER import decomp_alexnet
 
 import torchvision.models as imagenet_models
 import cifar10_models
@@ -58,6 +63,8 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='',
                         ' (default: resnet50)')
 parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
                     help='path to model file to load both its architecture and weights (default: none)')
+parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
+                    help='path to file to load its weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
@@ -272,11 +279,44 @@ def main_worker(gpu, ngpus_per_node, args):
             model.fc = nn.Linear(num_ftrs,num_classes)
         else:
             raise ValueError("Unfortunately ", args.arch, " is not yet supported for CIFAR10")
+            
+    if args.weights:
+        saved_weights = torch.load(args.weights)
+        if isinstance(saved_weights, nn.Module):
+            state_dict = saved_weights.state_dict()
+        elif "state_dict" in saved_weights:
+            state_dict = saved_weights["state_dict"]
+        else:
+            state_dict = saved_weights
+            
+        try:
+            model.load_state_dict(state_dict)
+        except:
+            # create new OrderedDict that does not contain module.
+            new_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                name = k[7:] # remove module.
+                new_state_dict[name] = v
+                
+            model.load_state_dict(new_state_dict)
 
-    #TODO: add option for finetune vs. feature extraction that only work if pretrained weights are imagenet    
-    if args.freeze and args.pretrained != "none":
-        for param in model.parameters():
-            param.requires_grad = False
+    print("Original Model:")
+    print(model)
+    print("\n\n")
+        
+
+    if args.decompose:
+        print("Decomposing...")
+
+        rank_func = est_rank if args.cp else tucker_rank # from OTHER
+        decomp_func = torch_cp_decomp if args.cp else tucker_decomp # from OTHER
+        decomp_arch = decomp_resnet if "resnet" in args.arch else decomp_alexnet
+        model = decomp_arch(model, rank_func, decomp_func)  #decompose_model(model, args.cp)
+        print("\n\n")
+
+        print("Decompose Model:")
+        print(model)
+        print("\n\n")
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -445,23 +485,29 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
+        start_log_time = time.time()
         val_log = validate(val_loader, model, criterion, args)
         val_log = [val_log]
 
         with open(os.path.join(model_dir, "test_log.csv"), "w") as test_log_file:
             test_log_csv = csv.writer(test_log_file)
-            test_log_csv.writerow(['test_loss', 'test_top1_acc', 'test_time'])
-            test_log_csv.writerows(val_log)
+            test_log_csv.writerow(['test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
+            test_log_csv.writerows(val_log + (time.time() - start_log_time,))
     else:
         train_log = []
 
         with open(os.path.join(model_dir, "train_log.csv"), "w") as train_log_file:
             train_log_csv = csv.writer(train_log_file)
-            train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_time'])
+            train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
 
+<<<<<<< HEAD
         print(args.start_epoch, " ", args.epochs)
 
         for epoch in range(args.start_epoch, args.start_epoch + args.epochs):
+=======
+        start_log_time = time.time()
+        for epoch in range(args.start_epoch, args.epochs):
+>>>>>>> use another decomposition method for alexnet and resnet + record time + save ckpt every 10 epochs
             if args.distributed:
                 train_sampler.set_epoch(epoch)
             adjust_learning_rate(optimizer, epoch, args)
@@ -479,7 +525,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # append to log
             with open(os.path.join(model_dir, "train_log.csv"), "a") as train_log_file:
                 train_log_csv = csv.writer(train_log_file)
-                train_log_csv.writerow(((epoch,) + train_epoch_log + val_epoch_log)) 
+                train_log_csv.writerow(((epoch,) + train_epoch_log + val_epoch_log + (time.time() - start_log_time,))) 
 
             # remember best acc@1 and save checkpoint
             is_best = acc1 > best_acc1
@@ -605,6 +651,10 @@ def save_checkpoint(state, is_best, dir_path, filename='checkpoint.pth.tar'):
     torch.save(state, os.path.join(dir_path, filename))
     if is_best:
         shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'model_best.pth.tar'))
+        
+    if (state['epoch']-1)%10 == 0:
+        shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))
+
 
 
 class AverageMeter(object):

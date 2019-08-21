@@ -330,6 +330,15 @@ def main_worker(gpu, ngpus_per_node, args):
 
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                     and args.rank % ngpus_per_node == 0):
+                if is_best:
+                    try:
+                        torch.save(model, os.path.join(model_dir, "model.pth"))
+                    except: 
+                        print("WARNING: Unable to save model.pth")
+                    try:
+                        torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
+                    except: 
+                        print("WARNING: Unable to save weights.pth")
                 try:
                     save_checkpoint({
                         'epoch': epoch + 1,
