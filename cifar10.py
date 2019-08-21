@@ -385,13 +385,19 @@ def main_worker(gpu, ngpus_per_node, args):
             if args.gpu is not None:
                 # best_acc1 may be from a checkpoint from a different GPU
                 best_acc1 = best_acc1.to(args.gpu)
-            model.load_state_dict(checkpoint['state_dict'])
+            try:
+                model.load_state_dict(checkpoint['state_dict'])
+            except:
+                model = checkpoint['model']
             try:
                 optimizer.load_state_dict(checkpoint['optimizer'])
             except:
                 optimizer = checkpoint["optimizer"]
             if 'lr_scheduler' in checkpoint:
-                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+                try:
+                    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+                except:
+                    lr_scheduler = checkpoint["lr_scheduler"]
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -518,25 +524,19 @@ def main_worker(gpu, ngpus_per_node, args):
                         torch.save(model, os.path.join(model_dir, "model.pth"))
                     except: 
                         print("WARNING: Unable to save model.pth")
+                    try:
+                        torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
+                    except: 
+                        print("WARNING: Unable to save weights.pth")
 
-                try:
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'model': model,
-                        'best_acc1': best_acc1,
-                        'optimizer' : optimizer,
-                        'lr_scheduler' : lr_scheduler,
-                    }, is_best, model_dir)
-                except: 
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'state_dict': model.state_dict(),
-                        'best_acc1': best_acc1,
-                        'optimizer' : optimizer.state_dict(),
-                        'lr_scheduler' : lr_scheduler,
-                    }, is_best, model_dir)
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': args.arch,
+                    'model': model,
+                    'best_acc1': best_acc1,
+                    'optimizer' : optimizer,
+                    'lr_scheduler' : lr_scheduler,
+                }, is_best, model_dir)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
