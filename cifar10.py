@@ -397,20 +397,6 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
 
-    print("Original Model:")
-    print(model)
-    print("\n\n")
-        
-
-    if args.decompose:
-        print("Decomposing...")
-        model = decompose_model(model, args.cp)
-        print("\n\n")
-
-        print("Decompose Model:")
-        print(model)
-        print("\n\n")
-
     cudnn.benchmark = True
 
     # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
