@@ -8,6 +8,7 @@ import sys
 import csv
 import distutils
 from contextlib import redirect_stdout
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
@@ -27,7 +28,12 @@ import copy
 
 import tensorly as tl
 import tensorly
-from decompositions import decompose_model
+#from decompositions import decompose_model
+from decomp_OTHER import est_rank, tucker_rank
+from torch_cp_decomp_OTHER import torch_cp_decomp
+from torch_tucker_OTHER import tucker_decomp
+from decomp_resnet50_OTHER import decomp_resnet
+from decomp_alexnet_OTHER import decomp_alexnet
 import customized_models
 
 default_model_names = sorted(name for name in models.__dict__
@@ -52,6 +58,10 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
+parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
+                    help='path to model file to load both its architecture and weights (default: none)')
+parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
+                    help='path to file to load its weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
@@ -71,6 +81,8 @@ parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
                          'effective batch size is batch-size * batch-multuplier')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='using learning rate schedule')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
@@ -80,6 +92,8 @@ parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
+parser.add_argument('--opt-ckpt', default='', type=str, metavar='OPT_PATH',
+                    help='path to checkpoint file to load optimizer state (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='only evaluate model on validation set')
 parser.add_argument('--pretrained', dest='pretrained', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
@@ -161,16 +175,61 @@ def main_worker(gpu, ngpus_per_node, args):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
+
     # create model
-    if args.pretrained:
+    if args.model:
+        if args.arch or args.pretrained:
+            print("WARNING: Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
+        model = None
+        saved_checkpoint = torch.load(args.model)
+        if isinstance(saved_checkpoint, nn.Module):
+            model = saved_checkpoint
+        elif "model" in saved_checkpoint:   
+            model = saved_checkpoint["model"]
+        else:
+            raise Exception("Unable to load model from " + args.model)   
+
+        if (args.gpu is not None):
+            model.cuda(args.gpu) 
+    elif args.pretrained:
         print("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
+    if args.weights:
+        saved_weights = torch.load(args.weights)
+        if isinstance(saved_weights, nn.Module):
+            state_dict = saved_weights.state_dict()
+        elif "state_dict" in saved_weights:
+            state_dict = saved_weights["state_dict"]
+        else:
+            state_dict = saved_weights
+            
+        try:
+            model.load_state_dict(state_dict)
+        except:
+            # create new OrderedDict that does not contain module.
+            new_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                name = k[7:] # remove module.
+                new_state_dict[name] = v
+                
+            model.load_state_dict(new_state_dict)
+
     if args.decompose:
-        model = decompose_model(model, args.cp)
+        print("Decomposing...")
+
+        rank_func = est_rank if args.cp else tucker_rank # from OTHER
+        decomp_func = torch_cp_decomp if args.cp else tucker_decomp # from OTHER
+        decomp_arch = decomp_resnet if "resnet" in args.arch else decomp_alexnet
+        model = decomp_arch(model, rank_func, decomp_func)  #decompose_model(model, args.cp)
+        print("\n\n")
+
+        print("Decompose Model:")
+        print(model)
+        print("\n\n")
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -207,6 +266,26 @@ def main_worker(gpu, ngpus_per_node, args):
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
+
+    if args.opt_ckpt:
+        print("WARNING: Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
+
+        checkpoint = torch.load(args.opt_ckpt)
+        optimizer = checkpoint['optimizer']
+        if 'lr_schedule' in checkpoint:
+            lr_scheduler = checkpoint['lr_schedule']
+        elif (args.lr_schedule):
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
+    else:
+        optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+
+        if (args.lr_schedule):
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
+
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -296,13 +375,14 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
+        start_log_time = time.time()
         val_log = validate(val_loader, model, criterion, args)
         val_log = [val_log]
 
         with open(os.path.join(model_dir, "test_log.csv"), "w") as test_log_file:
             test_log_csv = csv.writer(test_log_file)
-            test_log_csv.writerow(['test_loss', 'test_top1_acc', 'test_top5_acc', 'test_time'])
-            test_log_csv.writerows(val_log)
+            test_log_csv.writerow(['test_loss', 'test_top1_acc', 'test_top5_acc', 'test_time', 'cumulative_time'])
+            test_log_csv.writerows(val_log + (time.time() - start_log_time,))
     else:
         train_log = []
 
@@ -310,6 +390,7 @@ def main_worker(gpu, ngpus_per_node, args):
             train_log_csv = csv.writer(train_log_file)
             train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_top5_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_top5_acc', 'test_time'])
 
+        start_log_time = time.time()
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
@@ -325,7 +406,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # append to log
             with open(os.path.join(model_dir, "train_log.csv"), "a") as train_log_file:
                 train_log_csv = csv.writer(train_log_file)
-                train_log_csv.writerow(((epoch,) + train_epoch_log + val_epoch_log)) 
+                train_log_csv.writerow(((epoch,) + train_epoch_log + val_epoch_log + (time.time() - start_log_time,))) 
 
             # remember best acc@1 and save checkpoint
             is_best = acc1 > best_acc1
@@ -342,22 +423,15 @@ def main_worker(gpu, ngpus_per_node, args):
                         torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
                     except: 
                         print("WARNING: Unable to save weights.pth")
-                try:
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'model': model,
-                        'best_acc1': best_acc1,
-                        'optimizer' : optimizer,
-                    }, is_best, model_dir)
-                except: 
-                    save_checkpoint({
-                        'epoch': epoch + 1,
-                        'arch': args.arch,
-                        'state_dict': model.state_dict(),
-                        'best_acc1': best_acc1,
-                        'optimizer' : optimizer.state_dict(),
-                    }, is_best, model_dir)
+
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'arch': args.arch,
+                    'model': model,
+                    'best_acc1': best_acc1,
+                    'optimizer' : optimizer,
+                    'lr_scheduler' : lr_scheduler,
+                }, is_best, model_dir)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -458,6 +532,9 @@ def save_checkpoint(state, is_best, dir_path, filename='checkpoint.pth.tar'):
     torch.save(state, os.path.join(dir_path, filename))
     if is_best:
         shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'model_best.pth.tar'))
+
+    if (state['epoch']-1)%10 == 0:
+        shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))
 
 
 class AverageMeter(object):
