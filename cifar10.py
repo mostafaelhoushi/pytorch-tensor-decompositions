@@ -478,7 +478,7 @@ def main_worker(gpu, ngpus_per_node, args):
         with open(os.path.join(model_dir, "test_log.csv"), "w") as test_log_file:
             test_log_csv = csv.writer(test_log_file)
             test_log_csv.writerow(['test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
-            test_log_csv.writerows(val_log + (time.time() - start_log_time,))
+            test_log_csv.writerows(val_log + [(time.time() - start_log_time,)])
     else:
         train_log = []
 
@@ -486,14 +486,8 @@ def main_worker(gpu, ngpus_per_node, args):
             train_log_csv = csv.writer(train_log_file)
             train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
 
-<<<<<<< HEAD
-        print(args.start_epoch, " ", args.epochs)
-
-        for epoch in range(args.start_epoch, args.start_epoch + args.epochs):
-=======
         start_log_time = time.time()
         for epoch in range(args.start_epoch, args.epochs):
->>>>>>> use another decomposition method for alexnet and resnet + record time + save ckpt every 10 epochs
             if args.distributed:
                 train_sampler.set_epoch(epoch)
             adjust_learning_rate(optimizer, epoch, args)
