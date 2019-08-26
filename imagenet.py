@@ -427,7 +427,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 save_checkpoint({
                     'epoch': epoch + 1,
                     'arch': args.arch,
-                    'model': model,
+                    'state_dict': model.state_dict(),
                     'best_acc1': best_acc1,
                     'optimizer' : optimizer,
                     'lr_scheduler' : lr_scheduler,
