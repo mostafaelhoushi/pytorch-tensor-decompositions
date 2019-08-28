@@ -27,7 +27,7 @@ import copy
 
 import tensorly as tl
 import tensorly
-#from decompositions import decompose_model
+from decompositions import decompose_model
 from decomp_OTHER import est_rank, tucker_rank
 from torch_cp_decomp_OTHER import torch_cp_decomp
 from torch_tucker_OTHER import tucker_decomp
@@ -52,6 +52,10 @@ imagenet_model_names = sorted(name for name in imagenet_models.__dict__
 cifar10_model_names = sorted(name for name in cifar10_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(cifar10_models.__dict__[name]))
+# TODO: Add those pretrained models in the directory "original_pretrained_models" to cifar10_models.py script
+cifar10_model_existing_th_files = [".".join(f.split(".")[:-1]) for f in os.listdir("./models/cifar10/original_pretrained_models/") ]
+cifar10_model_names = list(set().union(cifar10_model_names,cifar10_model_existing_th_files))
+
 
 model_names = list(set().union(imagenet_model_names,cifar10_model_names))
 
@@ -199,10 +203,7 @@ def main_worker(gpu, ngpus_per_node, args):
         if args.pretrained == "none": 
             model = cifar10_models.__dict__[args.arch]()
         elif args.pretrained == "cifar10":
-            if args.arch in ["vgg11_bn"]:
-                # TODO: Save "vgg11_bn.th" as state_dict rather than model 
-                model = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
-            else:
+            try:
                 model = cifar10_models.__dict__[args.arch]()
                 
                 # TODO: move these 2 lines to inside cifar10_models.py
@@ -224,6 +225,8 @@ def main_worker(gpu, ngpus_per_node, args):
                     model.load_state_dict(new_state_dict)
                 else:
                     model.load_state_dict(state_dict)
+            except:
+                model = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
         else:
             raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
     elif args.arch not in cifar10_model_names:
@@ -313,8 +316,12 @@ def main_worker(gpu, ngpus_per_node, args):
 
         rank_func = est_rank if args.cp else tucker_rank # from OTHER
         decomp_func = torch_cp_decomp if args.cp else tucker_decomp # from OTHER
-        decomp_arch = decomp_resnet if "resnet" in args.arch else decomp_alexnet
-        model = decomp_arch(model, rank_func, decomp_func)  #decompose_model(model, args.cp)
+        if "resnet" in args.arch:
+            model = decomp_resnet(model, rank_func, decomp_func) 
+        elif "alexnet" in args.arch:
+            model = decomp_alexnet(model, rank_func, decomp_func)
+        else:
+            model = decompose_model(model, args.cp)
         print("\n\n")
 
         print("Decompose Model:")
@@ -345,8 +352,9 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # DataParallel will divide and allocate batch_size to all available GPUs
         if (args.arch.startswith('alexnet') or args.arch.startswith('vgg')) and args.pretrained != "cifar10":
-            model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
+            if(hasattr(model, 'features')):
+                model.features = torch.nn.DataParallel(model.features)
+                model.cuda()
         else:
             model = torch.nn.DataParallel(model).cuda()
 
