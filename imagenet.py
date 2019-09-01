@@ -28,7 +28,7 @@ import copy
 
 import tensorly as tl
 import tensorly
-#from decompositions import decompose_model
+from decompositions import decompose_model
 from decomp_OTHER import est_rank, tucker_rank
 from torch_cp_decomp_OTHER import torch_cp_decomp
 from torch_tucker_OTHER import tucker_decomp
@@ -223,8 +223,13 @@ def main_worker(gpu, ngpus_per_node, args):
 
         rank_func = est_rank if args.cp else tucker_rank # from OTHER
         decomp_func = torch_cp_decomp if args.cp else tucker_decomp # from OTHER
-        decomp_arch = decomp_resnet if "resnet" in args.arch else decomp_alexnet
-        model = decomp_arch(model, rank_func, decomp_func)  #decompose_model(model, args.cp)
+        if "resnet" in args.arch:
+            model = decomp_resnet(model, rank_func, decomp_func)
+        elif "alexnet" in args.arch:
+            model = decomp_alexnet(model, rank_func, decomp_func)
+        else:
+            model = decompose_model(model, args.cp)
+
         print("\n\n")
 
         print("Decompose Model:")
