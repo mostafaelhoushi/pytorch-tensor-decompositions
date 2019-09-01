@@ -34,6 +34,8 @@ from torch_tucker_OTHER import tucker_decomp
 from decomp_resnet50_OTHER import decomp_resnet
 from decomp_alexnet_OTHER import decomp_alexnet
 
+from reconstructions import reconstruct_model
+
 import torchvision.models as imagenet_models
 import cifar10_models
 
@@ -70,6 +72,7 @@ parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
 parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
                     help='path to file to load its weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
+parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -324,7 +327,16 @@ def main_worker(gpu, ngpus_per_node, args):
             model = decompose_model(model, args.cp)
         print("\n\n")
 
-        print("Decompose Model:")
+        print("Decomposed Model:")
+        print(model)
+        print("\n\n")
+
+    if args.reconstruct:
+        print("Reconstructing...")
+        model = reconstruct_model(model, args.cp)
+        print("\n\n")
+
+        print("Reconstructed Model:")
         print(model)
         print("\n\n")
 
@@ -423,9 +435,12 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # name model directory
     if (args.decompose):
-        decompose_label = "tucker_decompose"
         if (args.cp):
-            decompose_label += "cp_decompose"
+            decompose_label = "cp_decompose"
+        else:
+            decompose_label = "tucker_decompose"
+    elif (args.reconstruct):
+        decompose_label = "reconstruct"
     else:
         decompose_label = "no_decompose"
 
