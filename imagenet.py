@@ -213,7 +213,13 @@ def main_worker(gpu, ngpus_per_node, args):
             # create new OrderedDict that does not contain module.
             new_state_dict = OrderedDict()
             for k, v in state_dict.items():
-                name = k[7:] # remove module.
+                if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+                    if (k.startswith("features")):
+                        name = k[0:9] + k[9+7:] # remove "module" after features
+                    else:
+                        name = k
+                else:
+                    name = k[7:] # remove "module" at beginning of name
                 new_state_dict[name] = v
                 
             model.load_state_dict(new_state_dict)
@@ -301,9 +307,29 @@ def main_worker(gpu, ngpus_per_node, args):
             best_acc1 = checkpoint['best_acc1']
             if args.gpu is not None:
                 # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
+                try:
+                    best_acc1 = best_acc1.to(args.gpu)
+                except:
+                    best_acc1 = best_acc1
             if 'state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['state_dict'])
+                state_dict = checkpoint['state_dict']
+                try:
+                    model.load_state_dict(state_dict)
+                except:
+                    # create new OrderedDict that does not contain module.
+                    new_state_dict = OrderedDict()
+                    for k, v in state_dict.items():
+                        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+                            if (k.startswith("features")):
+                                name = k[0:9] + k[9+7:] # remove "module" after features
+                            else:
+                                name = k
+                        else:
+                            name = k[7:] # remove "module" at beginning of name
+                        new_state_dict[name] = v
+        
+                    model.load_state_dict(new_state_dict)
+
             else:
                 model = checkpoint['model']
 
