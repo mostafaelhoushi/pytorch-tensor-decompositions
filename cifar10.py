@@ -89,6 +89,8 @@ parser.add_argument('-b', '--batch-size', default=128, type=int,
 parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
                     help='how many batches to repeat before updating parameter. '
                          'effective batch size is batch-size * batch-multuplier')
+parser.add_argument('--downsize-freq', default=None, type=int,
+                    help='after how many epochs to downsize input images by 50% (default: None - no downsizing)')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
@@ -489,6 +491,17 @@ def main_worker(gpu, ngpus_per_node, args):
             normalize,
         ]), download=True)
 
+    train_dataset_downsized = datasets.CIFAR10(
+        root=data_dir,
+        train=True,
+        transform=transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(size=32, padding=4),
+            transforms.Resize((16,16)),
+            transforms.ToTensor(),
+            normalize,
+        ]), download=True)
+
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
@@ -496,6 +509,10 @@ def main_worker(gpu, ngpus_per_node, args):
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+
+    train_loader_downsized = torch.utils.data.DataLoader(
+        train_dataset_downsized, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
@@ -531,9 +548,19 @@ def main_worker(gpu, ngpus_per_node, args):
                 train_sampler.set_epoch(epoch)
             adjust_learning_rate(optimizer, epoch, args)
 
-            # train for one epoch
+            # train for one epoch           
+            if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
+                train_loader_chosen = train_loader_downsized
+                #optimizer.param_groups[0]['lr'] /= 10
+            else:
+                train_loader_chosen = train_loader
+
             print('current lr {:.4e}'.format(optimizer.param_groups[0]['lr']))
-            train_epoch_log = train(train_loader, model, criterion, optimizer, epoch, args)
+            train_epoch_log = train(train_loader_chosen, model, criterion, optimizer, epoch, args)
+            
+            #if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
+            #    optimizer.param_groups[0]['lr'] *= 10
+
             if (args.lr_schedule):
                 lr_scheduler.step()
 
