@@ -4,7 +4,7 @@ import torch.nn as nn
 from .channel_selection import channel_selection
 
 
-__all__ = ['resnet']
+__all__ = ['resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
 
 """
 preactivation resnet with bottleneck design.
@@ -119,3 +119,26 @@ class resnet(nn.Module):
         x = self.fc(x)
 
         return x
+
+def resnet20():
+    return resnet(depth=20)
+
+
+def resnet32():
+    return resnet(depth=32)
+
+
+def resnet44():
+    return resnet(depth=44)
+
+
+def resnet56():
+    return resnet(depth=56)
+
+
+def resnet110():
+    return resnet(depth=110)
+
+
+def resnet1202():
+    return resnet(depth=1202)

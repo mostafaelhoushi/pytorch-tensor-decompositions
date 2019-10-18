@@ -6,7 +6,7 @@ from torch.autograd import Variable
 from .channel_selection import channel_selection
 
 
-__all__ = ['densenet']
+__all__ = ['densenet121', 'densenet169', 'densenet201', 'densenet264']
 
 """
 densenet with basic block.
@@ -136,3 +136,15 @@ class densenet(nn.Module):
         x = self.fc(x)
 
         return x
+
+def densenet121():
+    return densenet(depth=121)
+
+def densenet169():
+    return densenet(depth=169)
+
+def densenet201():
+    return densenet(depth=201)
+
+def densenet264():
+    return densenet(depth=264)

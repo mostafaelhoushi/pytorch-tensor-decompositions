@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 
 
-__all__ = ['vgg']
+__all__ = ['vgg11', 'vgg13', 'vgg16', 'vgg19']
 
 defaultcfg = {
     11 : [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512],
@@ -64,6 +64,18 @@ class vgg(nn.Module):
             elif isinstance(m, nn.Linear):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
+
+def vgg11():
+    return vgg(depth=11)
+
+def vgg13():
+    return vgg(depth=13)
+
+def vgg16():
+    return vgg(depth=16)
+
+def vgg19():
+    return vgg(depth=19)
 
 if __name__ == '__main__':
     net = vgg()

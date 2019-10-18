@@ -263,26 +263,12 @@ def main_worker(gpu, ngpus_per_node, args):
 
         # Parameters of newly constructed modules have requires_grad=True by default
         # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
-        if args.arch.startswith("resnet"):
-            # TODO: handle if model came from imagenet or cifar10
-            # change FC layer to accomodate dataset labels
-            num_ftrs = model.fc.in_features
-            model.fc = nn.Linear(num_ftrs, num_classes)
-        elif args.arch == "alexnet":
-            num_ftrs = model.classifier[6].in_features
-            model.classifier[6] = nn.Linear(num_ftrs,num_classes)
-        elif args.arch == "vgg11_bn":
-            num_ftrs = model.classifier[6].in_features
-            model.classifier[6] = nn.Linear(num_ftrs,num_classes)
-        elif args.arch == "vgg16":
+        if args.arch == "alexnet":
             num_ftrs = model.classifier[6].in_features
             model.classifier[6] = nn.Linear(num_ftrs,num_classes)
         elif args.arch == "squeezenet1_0":
             model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
             model.num_classes = num_classes
-        elif args.arch == "densenet121":
-            num_ftrs = model.classifier.in_features
-            model.classifier = nn.Linear(num_ftrs, num_classes)
         elif args.arch == "inception_v3":
             # Handle the auxilary net
             num_ftrs = model.AuxLogits.fc.in_features
