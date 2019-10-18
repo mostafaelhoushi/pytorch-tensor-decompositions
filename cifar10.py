@@ -81,9 +81,9 @@ parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=128, type=int,
+parser.add_argument('-b', '--batch-size', default=64, type=int,
                     metavar='N',
-                    help='mini-batch size (default: 128), this is the total '
+                    help='mini-batch size (default: 64), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
 parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
@@ -372,7 +372,7 @@ def main_worker(gpu, ngpus_per_node, args):
             lr_scheduler = checkpoint['lr_schedule']
         elif (args.lr_schedule):
             lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
+                                                                milestones=[80, 120], last_epoch=args.start_epoch - 1)
     else:
         optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                     momentum=args.momentum,
@@ -380,7 +380,9 @@ def main_worker(gpu, ngpus_per_node, args):
 
         if (args.lr_schedule):
             lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
+                                                                milestones=[80, 120], last_epoch=args.start_epoch - 1)
+        else:
+            lr_scheduler = None
 
     if args.arch in ['resnet1202', 'resnet110']:
         # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
@@ -534,7 +536,6 @@ def main_worker(gpu, ngpus_per_node, args):
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args)
 
             # train for one epoch           
             if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
@@ -732,13 +733,6 @@ class ProgressMeter(object):
         num_digits = len(str(num_batches // 1))
         fmt = '{:' + str(num_digits) + 'd}'
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
-
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 30))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
 
 
 def accuracy(output, target, topk=(1,)):
