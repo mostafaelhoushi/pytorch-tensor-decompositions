@@ -91,6 +91,8 @@ parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
                          'effective batch size is batch-size * batch-multuplier')
 parser.add_argument('--downsize-freq', default=None, type=int,
                     help='after how many epochs to downsize input images by 50% (default: None - no downsizing)')
+parser.add_argument('--downsize-lr-reduction', default=1, type=float,
+                    help='factor of which the learning rate will be divided by during downsizing epochs')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
@@ -551,15 +553,17 @@ def main_worker(gpu, ngpus_per_node, args):
             # train for one epoch           
             if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
                 train_loader_chosen = train_loader_downsized
-                #optimizer.param_groups[0]['lr'] /= 10
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] /= args.downsize_lr_reduction
             else:
                 train_loader_chosen = train_loader
 
             print('current lr {:.4e}'.format(optimizer.param_groups[0]['lr']))
             train_epoch_log = train(train_loader_chosen, model, criterion, optimizer, epoch, args)
             
-            #if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
-            #    optimizer.param_groups[0]['lr'] *= 10
+            if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] *= args.downsize_lr_reduction
 
             if (args.lr_schedule):
                 lr_scheduler.step()
