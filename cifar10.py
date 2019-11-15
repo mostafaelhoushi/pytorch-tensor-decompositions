@@ -93,6 +93,8 @@ parser.add_argument('--downsize-freq', default=None, type=int,
                     help='after how many epochs to downsize input images by 50% (default: None - no downsizing)')
 parser.add_argument('--downsize-lr-reduction', default=1, type=float,
                     help='factor of which the learning rate will be divided by during downsizing epochs')
+parser.add_argument('--downsize-bm', default=None, type=float,
+                    help='factor of which the batch size will be multiplied by during downsizing epochs')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
@@ -371,16 +373,14 @@ def main_worker(gpu, ngpus_per_node, args):
         if 'lr_schedule' in checkpoint:
             lr_scheduler = checkpoint['lr_schedule']
         elif (args.lr_schedule):
-            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                                milestones=[80, 120], last_epoch=args.start_epoch - 1)
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250, 350], last_epoch=args.start_epoch-1)
     else:
         optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                     momentum=args.momentum,
                                     weight_decay=args.weight_decay)
 
         if (args.lr_schedule):
-            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                                milestones=[80, 120], last_epoch=args.start_epoch - 1)
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250, 350], last_epoch=args.start_epoch-1)
         else:
             lr_scheduler = None
 
@@ -501,9 +501,10 @@ def main_worker(gpu, ngpus_per_node, args):
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
-    train_loader_downsized = torch.utils.data.DataLoader(
-        train_dataset_downsized, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
+    if args.downsize_freq is not None:
+        train_loader_downsized = torch.utils.data.DataLoader(
+            train_dataset_downsized, batch_size=args.batch_size * int(1 if args.downsize_bm is None else args.downsize_bm), shuffle=(train_sampler is None),
+            num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
         datasets.CIFAR10(

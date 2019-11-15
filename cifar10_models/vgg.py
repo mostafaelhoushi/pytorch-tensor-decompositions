@@ -76,9 +76,3 @@ def vgg16():
 
 def vgg19():
     return vgg(depth=19)
-
-if __name__ == '__main__':
-    net = vgg()
-    x = Variable(torch.FloatTensor(16, 3, 40, 40))
-    y = net(x)
-    print(y.data.shape)

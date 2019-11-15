@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from .channel_selection import channel_selection
-
 
 __all__ = ['densenet121', 'densenet169', 'densenet201', 'densenet264']
 
@@ -17,7 +15,6 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         planes = expansion * growthRate
         self.bn1 = nn.BatchNorm2d(inplanes)
-        self.select = channel_selection(inplanes)
         self.conv1 = nn.Conv2d(cfg, growthRate, kernel_size=3, 
                                padding=1, bias=False)
         self.relu = nn.ReLU(inplace=True)
@@ -25,7 +22,6 @@ class BasicBlock(nn.Module):
 
     def forward(self, x):
         out = self.bn1(x)
-        out = self.select(out)
         out = self.relu(out)
         out = self.conv1(out)
         if self.dropRate > 0:
@@ -39,14 +35,12 @@ class Transition(nn.Module):
     def __init__(self, inplanes, outplanes, cfg):
         super(Transition, self).__init__()
         self.bn1 = nn.BatchNorm2d(inplanes)
-        self.select = channel_selection(inplanes)
         self.conv1 = nn.Conv2d(cfg, outplanes, kernel_size=1,
                                bias=False)
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         out = self.bn1(x)
-        out = self.select(out)
         out = self.relu(out)
         out = self.conv1(out)
         out = F.avg_pool2d(out, 2)
@@ -86,7 +80,6 @@ class densenet(nn.Module):
         self.trans2 = self._make_transition(compressionRate, cfg[2*n+1])
         self.dense3 = self._make_denseblock(block, n, cfg[2*n+2:3*n+2])
         self.bn = nn.BatchNorm2d(self.inplanes)
-        self.select = channel_selection(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(8)
 
@@ -128,7 +121,6 @@ class densenet(nn.Module):
         x = self.trans2(self.dense2(x))
         x = self.dense3(x)
         x = self.bn(x)
-        x = self.select(x)
         x = self.relu(x)
 
         x = self.avgpool(x)
