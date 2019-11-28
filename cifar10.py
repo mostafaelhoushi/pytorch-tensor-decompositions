@@ -26,13 +26,7 @@ from torchsummary import summary
 import copy
 
 import tensorly as tl
-import tensorly
 from decompositions import decompose_model
-from decomp_OTHER import est_rank, tucker_rank
-from torch_cp_decomp_OTHER import torch_cp_decomp
-from torch_tucker_OTHER import tucker_decomp
-from decomp_resnet50_OTHER import decomp_resnet
-from decomp_alexnet_OTHER import decomp_alexnet
 
 from reconstructions import reconstruct_model
 
@@ -309,14 +303,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.decompose:
         print("Decomposing...")
 
-        rank_func = est_rank if args.cp else tucker_rank # from OTHER
-        decomp_func = torch_cp_decomp if args.cp else tucker_decomp # from OTHER
-        if "resnet" in args.arch:
-            model = decomp_resnet(model, rank_func, decomp_func) 
-        elif "alexnet" in args.arch:
-            model = decomp_alexnet(model, rank_func, decomp_func)
-        else:
-            model = decompose_model(model, args.cp)
+        model = decompose_model(model, args.cp)
         print("\n\n")
 
         print("Decomposed Model:")
@@ -436,10 +423,11 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         decompose_label = "no_decompose"
 
+    arch_name = "generic" if (args.arch is None or len(args.arch) == 0) else args.arch
     if args.desc is not None and len(args.desc) > 0:
-        model_name = '%s/%s_%s' % (args.arch, args.desc, decompose_label)
+        model_name = '%s/%s_%s' % (arch_name, args.desc, decompose_label)
     else:
-        model_name = '%s/%s' % (args.arch, decompose_label)
+        model_name = '%s/%s' % (arch_name, decompose_label)
 
     model_dir = os.path.join(os.path.join(os.path.join(os.getcwd(), "models"), "cifar10"), model_name)
     if not os.path.isdir(model_dir):

@@ -17,10 +17,27 @@ def decompose_model(model, cp=False):
         if type(module) == nn.Conv2d :
             conv_layer = module
             if cp:
-                rank = max(conv_layer.weight.data.numpy().shape)//3
+                rank = cp_rank(conv_layer)
+                print(conv_layer, "CP Estimated rank", rank)
+
+                if (rank**2 >= conv_layer.in_channels * conv_layer.out_channels):
+                    print("(rank**2 >= conv_layer.in_channels * conv_layer.out_channels")
+                    continue
+                
                 decomposed = cp_decomposition_conv_layer(conv_layer, rank)
             else:
-                decomposed = tucker_decomposition_conv_layer(conv_layer)
+                ranks = tucker_ranks(conv_layer)
+                print(conv_layer, "VBMF Estimated ranks", ranks)
+
+                if (np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels):
+                    print("np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels)")
+                    continue
+
+                if (any(r <= 0 for r in ranks)):
+                    print("One of the estimated ranks is 0 or less. Skipping layer")
+                    continue
+
+                decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
 
             model._modules[name] = decomposed
 
@@ -56,7 +73,8 @@ def cp_decomposition_conv_layer(layer, rank):
             out_channels=last.shape[0], kernel_size=1, stride=1,
             padding=0, dilation=layer.dilation, bias=True)
 
-    pointwise_r_to_t_layer.bias.data = layer.bias.data
+    if layer.bias is not None:
+        pointwise_r_to_t_layer.bias.data = layer.bias.data
 
     depthwise_horizontal_layer.weight.data = \
         torch.transpose(horizontal, 1, 0).unsqueeze(1).unsqueeze(1)
@@ -71,33 +89,84 @@ def cp_decomposition_conv_layer(layer, rank):
     
     return nn.Sequential(*new_layers)
 
-def estimate_ranks(layer):
+def cp_decomposition_conv_layer_other(layer, rank):
+    W = layer.weight.data
+
+    last, first, vertical, horizontal = parafac(W, rank=rank, init='random')
+    
+    pointwise_s_to_r_layer = nn.Conv2d(in_channels=first.shape[0],
+                                       out_channels=first.shape[1],
+                                       kernel_size=1,
+                                       padding=0,
+                                       bias=False)
+
+    depthwise_r_to_r_layer = nn.Conv2d(in_channels=rank,
+                                       out_channels=rank,
+                                       kernel_size=vertical.shape[0],
+                                       stride=layer.stride,
+                                       padding=layer.padding,
+                                       dilation=layer.dilation,
+                                       groups=rank,
+                                       bias=False)
+                                       
+    pointwise_r_to_t_layer = nn.Conv2d(in_channels=last.shape[1],
+                                       out_channels=last.shape[0],
+                                       kernel_size=1,
+                                       padding=0,
+                                       bias=True)
+    
+    if layer.bias is not None:
+        pointwise_r_to_t_layer.bias.data = layer.bias.data
+
+    sr = first.t_().unsqueeze_(-1).unsqueeze_(-1)
+    rt = last.unsqueeze_(-1).unsqueeze_(-1)
+    rr = torch.stack([vertical.narrow(1, i, 1) @ torch.t(horizontal).narrow(0, i, 1) for i in range(rank)]).unsqueeze_(1)
+
+    pointwise_s_to_r_layer.weight.data = sr 
+    pointwise_r_to_t_layer.weight.data = rt
+    depthwise_r_to_r_layer.weight.data = rr
+
+    new_layers = [pointwise_s_to_r_layer,
+                  depthwise_r_to_r_layer, pointwise_r_to_t_layer]
+    return new_layers
+
+
+def tucker_ranks(layer):
     """ Unfold the 2 modes of the Tensor the decomposition will 
     be performed on, and estimates the ranks of the matrices using VBMF 
     """
 
     weights = layer.weight.data
+
     unfold_0 = tl.base.unfold(weights, 0) 
     unfold_1 = tl.base.unfold(weights, 1)
     _, diag_0, _, _ = VBMF.EVBMF(unfold_0)
     _, diag_1, _, _ = VBMF.EVBMF(unfold_1)
+
     ranks = [diag_0.shape[0], diag_1.shape[1]]
     return ranks
 
-def tucker_decomposition_conv_layer(layer):
+def cp_rank(layer):
+    weights = layer.weight.data
+
+    # Method used in previous repo
+    # rank = max(layer.weight.shape)//3
+    # return rank
+
+    unfold_0 = tl.base.unfold(weights, 0) 
+    unfold_1 = tl.base.unfold(weights, 1)
+    _, diag_0, _, _ = VBMF.EVBMF(unfold_0)
+    _, diag_1, _, _ = VBMF.EVBMF(unfold_1)
+
+    rank = max([diag_0.shape[0], diag_1.shape[0]])
+    return rank
+
+def tucker_decomposition_conv_layer(layer, ranks):
     """ Gets a conv layer, 
         returns a nn.Sequential object with the Tucker decomposition.
         The ranks are estimated with a Python implementation of VBMF
         https://github.com/CasvandenBogaard/VBMF
     """
-
-    ranks = estimate_ranks(layer)
-    print(layer, "VBMF Estimated ranks", ranks)
-
-    if (any(r <= 0 for r in ranks)):
-        print("One of the estimated ranks is 0 or less. Skipping layer")
-        return layer
-
     core, [last, first] = \
         partial_tucker(layer.weight.data, \
             modes=[0, 1], ranks=ranks, init='svd')

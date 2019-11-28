@@ -1,5 +1,6 @@
 from __future__ import division
 
+import torch
 import numpy as np
 from scipy.sparse.linalg import svds
 from scipy.optimize import minimize_scalar
@@ -203,22 +204,22 @@ def EVBMF(Y, sigma2=None, H=None):
     tauubar = 2.5129*np.sqrt(alpha)
     
     #SVD of the input matrix, max rank of H
-    U,s,V = np.linalg.svd(Y)
+    U,s,V = torch.svd(Y)
     U = U[:,:H]
     s = s[:H]
-    V = V[:H].T 
+    V[:H].t_() 
 
     #Calculate residual
     residual = 0.
     if H<L:
-        residual = np.sum(np.sum(Y**2)-np.sum(s**2))
+        residual = torch.sum(torch.sum(Y**2)-torch.sum(s**2))
 
     #Estimation of the variance when sigma2 is unspecified
     if sigma2 is None: 
         xubar = (1+tauubar)*(1+alpha/tauubar)
         eH_ub = int(np.min([np.ceil(L/(1+alpha))-1, H]))-1
-        upper_bound = (np.sum(s**2)+residual)/(L*M)
-        lower_bound = np.max([s[eH_ub+1]**2/(M*xubar), np.mean(s[eH_ub+1:]**2)/M])
+        upper_bound = (torch.sum(s**2)+residual)/(L*M)
+        lower_bound = np.max([s[eH_ub+1]**2/(M*xubar), torch.mean(s[eH_ub+1:]**2)/M])
 
         scale = 1.#/lower_bound
         s = s*np.sqrt(scale)
@@ -226,37 +227,42 @@ def EVBMF(Y, sigma2=None, H=None):
         lower_bound = lower_bound*scale
         upper_bound = upper_bound*scale
 
-        sigma2_opt = minimize_scalar(EVBsigma2, args=(L,M,s,residual,xubar), bounds=[lower_bound, upper_bound], method='Bounded')
+        sigma2_opt = minimize_scalar(EVBsigma2, args=(L,M,s,residual,xubar), bounds=[lower_bound.item(), upper_bound.item()], method='Bounded')
         sigma2 = sigma2_opt.x
 
     #Threshold gamma term
     threshold = np.sqrt(M*sigma2*(1+tauubar)*(1+alpha/tauubar))
-    pos = np.sum(s>threshold)
+
+    pos = torch.sum(s>threshold)
+    if pos == 0: return np.array([])
 
     #Formula (15) from [2]
-    d = np.multiply(s[:pos]/2, 1-np.divide((L+M)*sigma2, s[:pos]**2) + np.sqrt((1-np.divide((L+M)*sigma2, s[:pos]**2))**2 -4*L*M*sigma2**2/s[:pos]**4) )
+    d = torch.mul(s[:pos]/2, \
+                    1-(L+M)*sigma2/s[:pos]**2 + torch.sqrt( \
+                    (1-((L+M)*sigma2)/s[:pos]**2)**2 - \
+                    (4*L*M*sigma2**2)/s[:pos]**4) )
 
     #Computation of the posterior
     post = {}
-    post['ma'] = np.zeros(H) 
-    post['mb'] = np.zeros(H)
-    post['sa2'] = np.zeros(H) 
-    post['sb2'] = np.zeros(H) 
-    post['cacb'] = np.zeros(H)  
+    post['ma'] = torch.zeros(H) 
+    post['mb'] = torch.zeros(H)
+    post['sa2'] = torch.zeros(H) 
+    post['sb2'] = torch.zeros(H) 
+    post['cacb'] = torch.zeros(H)  
 
-    tau = np.multiply(d, s[:pos])/(M*sigma2)
-    delta = np.multiply(np.sqrt(np.divide(M*d, L*s[:pos])), 1+alpha/tau)
+    tau = (d * s[:pos])/(M*sigma2)
+    delta = torch.sqrt((M*d / L*s[:pos])) * 1+alpha/tau
 
-    post['ma'][:pos] = np.sqrt(np.multiply(d, delta))
-    post['mb'][:pos] = np.sqrt(np.divide(d, delta))
-    post['sa2'][:pos] = np.divide(sigma2*delta, s[:pos])
-    post['sb2'][:pos] = np.divide(sigma2, np.multiply(delta, s[:pos]))
-    post['cacb'][:pos] = np.sqrt(np.multiply(d, s[:pos])/(L*M))
+    post['ma'][:pos] = torch.sqrt((d * delta))
+    post['mb'][:pos] = torch.sqrt((d / delta))
+    post['sa2'][:pos] = sigma2*delta / s[:pos]
+    post['sb2'][:pos] = sigma2 / (delta * s[:pos])
+    post['cacb'][:pos] = torch.sqrt((d * s[:pos])/(L*M))
     post['sigma2'] = sigma2
-    post['F'] = 0.5*(L*M*np.log(2*np.pi*sigma2) + (residual+np.sum(s**2))/sigma2 
-                     + np.sum(M*np.log(tau+1) + L*np.log(tau/alpha +1) - M*tau))
+    post['F'] = 0.5*(L*M*np.log(2*np.pi*sigma2) + (residual+torch.sum(s**2))/sigma2 
+                     + torch.sum(M*np.log(tau+1) + L*torch.log(tau/alpha +1) - M*tau))
 
-    return U[:,:pos], np.diag(d), V[:,:pos], post
+    return U[:,:pos], torch.diag(d), V[:,:pos], post
 
 def EVBsigma2(sigma2,L,M,s,residual,xubar):
     H = len(s)
@@ -268,20 +274,20 @@ def EVBsigma2(sigma2,L,M,s,residual,xubar):
     z2 = x[x<=xubar]
     tau_z1 = tau(z1, alpha)
 
-    term1 = np.sum(z2 - np.log(z2))
-    term2 = np.sum(z1 - tau_z1)
-    term3 = np.sum( np.log( np.divide(tau_z1+1, z1)))
-    term4 = alpha*np.sum(np.log(tau_z1/alpha+1))
+    term1 = torch.sum(z2 - torch.log(z2))
+    term2 = torch.sum(z1 - tau_z1)
+    term3 = torch.sum(torch.log( (tau_z1+1) / z1 ))
+    term4 = alpha*torch.sum(torch.log(tau_z1/alpha+1))
     
     obj = term1+term2+term3+term4+ residual/(M*sigma2) + (L-H)*np.log(sigma2)
 
     return obj
 
 def phi0(x):
-    return x-np.log(x)
+    return x-torch.log(x)
 
 def phi1(x, alpha):
-    return np.log(tau(x,alpha)+1) + alpha*np.log(tau(x,alpha)/alpha + 1) - tau(x,alpha)
+    return torch.log(tau(x,alpha)+1) + alpha*torch.log(tau(x,alpha)/alpha + 1) - tau(x,alpha)
 
 def tau(x, alpha):
-    return 0.5 * (x-(1+alpha) + np.sqrt((x-(1+alpha))**2 - 4*alpha))
+    return 0.5 * (x-(1+alpha) + torch.sqrt((x-(1+alpha))**2 - 4*alpha))
