@@ -30,37 +30,18 @@ from decompositions import decompose_model
 
 from reconstructions import reconstruct_model
 
-import torchvision.models as imagenet_models
-import cifar10_models
+import cifar10_models as models
 
-'''
-Unfortunately, none of the pytorch repositories with ResNets on CIFAR10 provides an 
-implementation as described in the original paper. If you just use the torchvision's 
-models on CIFAR10 you'll get the model that differs in number of layers and parameters. 
-This is unacceptable if you want to directly compare ResNet-s on CIFAR10 with the 
-original paper. The purpose of resnet_cifar10 (which has been obtained from https://github.com/akamaster/pytorch_resnet_cifar10
-is to provide a valid pytorch implementation of ResNet-s for CIFAR10 as described in the original paper. 
-'''
-
-imagenet_model_names = sorted(name for name in imagenet_models.__dict__
+model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
-    and callable(imagenet_models.__dict__[name]))
-cifar10_model_names = sorted(name for name in cifar10_models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(cifar10_models.__dict__[name]))
-# TODO: Add those pretrained models in the directory "original_pretrained_models" to cifar10_models.py script
-cifar10_model_existing_th_files = [".".join(f.split(".")[:-1]) for f in os.listdir("./models/cifar10/original_pretrained_models/") ]
-cifar10_model_names = list(set().union(cifar10_model_names,cifar10_model_existing_th_files))
-
-
-model_names = list(set().union(imagenet_model_names,cifar10_model_names))
+    and callable(models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='',
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
-                        ' (default: resnet50)')
+                        ' (default: resnet18)')
 parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
                     help='path to model file to load both its architecture and weights (default: none)')
 parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
@@ -75,9 +56,11 @@ parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=64, type=int,
+parser.add_argument('-opt', '--optimizer', metavar='OPT', default="SGD", 
+                    help='optimizer algorithm')
+parser.add_argument('-b', '--batch-size', default=128, type=int,
                     metavar='N',
-                    help='mini-batch size (default: 64), this is the total '
+                    help='mini-batch size (default: 128), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
 parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
@@ -106,8 +89,8 @@ parser.add_argument('--resume', default='', type=str, metavar='CHECKPOINT_PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='only evaluate model on validation set')
-parser.add_argument('--pretrained', dest='pretrained', default="none", 
-                    help='choose whether model is not pre-trained, or pre-trained on ImageNet, or on CIFAR10')
+parser.add_argument('--pretrained', dest='pretrained', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='use pre-trained model')
 parser.add_argument('--freeze', dest='freeze', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='freeze pre-trained weights')
 parser.add_argument('--world-size', default=-1, type=int,
@@ -188,93 +171,30 @@ def main_worker(gpu, ngpus_per_node, args):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
-    # create or load model
+    # create model
     if args.model:
-        if args.arch or (args.pretrained and args.pretrained != "none"):
+        if args.arch or args.pretrained:
             print("WARNING: Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
         model = None
         saved_checkpoint = torch.load(args.model)
         if isinstance(saved_checkpoint, nn.Module):
             model = saved_checkpoint
-        elif "model" in saved_checkpoint:
+        elif "model" in saved_checkpoint:   
             model = saved_checkpoint["model"]
         else:
-            raise Exception("Unable to load model from " + args.model)
-        
-    # TODO: Clean up this code. Create separate function to load each CIFAR10 version of a model. And then load its weights if needed
-    elif args.arch in cifar10_model_names and args.pretrained != "imagenet":
-        if args.pretrained == "none": 
-            model = cifar10_models.__dict__[args.arch]()
-        elif args.pretrained == "cifar10":
-            try:
-                model = cifar10_models.__dict__[args.arch]()
-                
-                # TODO: move these 2 lines to inside cifar10_models.py
-                saved_checkpoint = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
-                if "state_dict" in saved_checkpoint:
-                    state_dict = saved_checkpoint["state_dict"]
-                else:
-                    state_dict = saved_checkpoint
-                
-                # TODO: change condition to: if original saved file with DataParallel
-                if args.arch.startswith("resnet"):
-                    # create new OrderedDict that does not contain module.
-                    new_state_dict = OrderedDict()
-                    for k, v in state_dict.items():
-                        name = k[7:] # remove module.
-                        new_state_dict[name] = v
-                    
-                    # load params
-                    model.load_state_dict(new_state_dict)
-                else:
-                    model.load_state_dict(state_dict)
-            except:
-                model = torch.load("./models/cifar10/original_pretrained_models/" + args.arch + ".th")
-        else:
-            raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
-    elif args.arch not in cifar10_model_names:
-        if args.pretrained == "none": 
-            model = imagenet_models.__dict__[args.arch]()
-        elif args.pretrained == "imagenet":
-            model = imagenet_models.__dict__[args.arch](pretrained=True)
-        elif os.path.exists(args.pretrained):
-            model = imagenet_models.__dict__[args.arch]()
-            state_dict = None
-            
-            saved_checkpoint = torch.load(args.pretrained)
-            if "state_dict" in saved_checkpoint:
-                state_dict = saved_checkpoint["state_dict"]
-            elif "model" in saved_checkpoint:
-                model = saved_checkpoint["model"]
-                state_dict = model.state_dict()
-            else:
-                state_dict = saved_checkpoint
-						
-			# load params
-            model.load_state_dict(state_dict)
-        else:
-            raise Exception("Currently model {} does not support weights {}".format(args.arch, args.pretrained))
+            raise Exception("Unable to load model from " + args.model)   
 
-        # Convert architecture to match CIFAR10 output
+        if (args.gpu is not None):
+            model.cuda(args.gpu) 
+    elif args.pretrained:
+        print("=> using pre-trained model '{}'".format(args.arch))
+        model = models.__dict__[args.arch](pretrained=True)
+    else:
+        print("=> creating model '{}'".format(args.arch))
+        model = models.__dict__[args.arch]()
 
-        # Parameters of newly constructed modules have requires_grad=True by default
-        # TODO: Check https://pytorch.org/tutorials/beginner/finetuning_torchvision_models_tutorial.html to handle different models
-        if args.arch == "alexnet":
-            num_ftrs = model.classifier[6].in_features
-            model.classifier[6] = nn.Linear(num_ftrs,num_classes)
-        elif args.arch == "squeezenet1_0":
-            model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
-            model.num_classes = num_classes
-        elif args.arch == "inception_v3":
-            # Handle the auxilary net
-            num_ftrs = model.AuxLogits.fc.in_features
-            model.AuxLogits.fc = nn.Linear(num_ftrs, num_classes)
-            # Handle the primary net
-            num_ftrs = model.fc.in_features
-            model.fc = nn.Linear(num_ftrs,num_classes)
-        else:
-            raise ValueError("Unfortunately ", args.arch, " is not yet supported for CIFAR10")
-            
+    #TODO: add option for finetune vs. feature extraction that only work if pretrained weights are imagenet    
+
     if args.weights:
         saved_weights = torch.load(args.weights)
         if isinstance(saved_weights, nn.Module):
@@ -349,27 +269,32 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             model = torch.nn.DataParallel(model).cuda()
 
-    # define loss function (criterion) and optimizer
+    # define loss function (criterion)
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
-    if args.opt_ckpt:
-        print("WARNING: Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
-
-        checkpoint = torch.load(args.opt_ckpt)
-        optimizer = checkpoint['optimizer']
-        if 'lr_schedule' in checkpoint:
-            lr_scheduler = checkpoint['lr_schedule']
-        elif (args.lr_schedule):
-            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250, 350], last_epoch=args.start_epoch-1)
+    # define optimizer
+    optimizer = None 
+    if(args.optimizer.lower() == "sgd"):
+        optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "adadelta"):
+        optimizer = torch.optim.Adadelta(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "adagrad"):
+        optimizer = torch.optim.Adagrad(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "adam"):
+        optimizer = torch.optim.Adam(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "rmsprop"):
+        optimizer = torch.optim.RMSprop(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "radam"):
+        optimizer = optim.RAdam(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "ranger"):
+        optimizer = optim.Ranger(model.parameters(), args.lr, weight_decay=args.weight_decay)
     else:
-        optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                    momentum=args.momentum,
-                                    weight_decay=args.weight_decay)
+        raise ValueError("Optimizer type: ", args.optimizer, " is not supported or known")
 
-        if (args.lr_schedule):
-            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250, 350], last_epoch=args.start_epoch-1)
-        else:
-            lr_scheduler = None
+    # define learning rate schedule
+    if (args.lr_schedule):
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                            milestones=[80, 120, 160, 180], last_epoch=args.start_epoch - 1)
 
     if args.arch in ['resnet1202', 'resnet110']:
         # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
@@ -387,19 +312,8 @@ def main_worker(gpu, ngpus_per_node, args):
             if args.gpu is not None:
                 # best_acc1 may be from a checkpoint from a different GPU
                 best_acc1 = best_acc1.to(args.gpu)
-            try:
-                model.load_state_dict(checkpoint['state_dict'])
-            except:
-                model = checkpoint['model']
-            try:
-                optimizer.load_state_dict(checkpoint['optimizer'])
-            except:
-                optimizer = checkpoint["optimizer"]
-            if 'lr_scheduler' in checkpoint:
-                try:
-                    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-                except:
-                    lr_scheduler = checkpoint["lr_scheduler"]
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -409,8 +323,10 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
     model_tmp_copy = copy.deepcopy(model) # we noticed calling summary() on original model degrades it's accuracy. So we will call summary() on a copy of the model
+    if (args.gpu is not None):
+        model_tmp_copy.cuda(args.gpu)
     summary(model_tmp_copy, input_size=(3, 32, 32))
-    print("WARNING: The summary function is not counting properly parameters in custom layers")
+    print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
 
     # name model directory
     if (args.decompose):
@@ -439,9 +355,8 @@ def main_worker(gpu, ngpus_per_node, args):
 
     with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
         with redirect_stdout(summary_file):
-            # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
             summary(model_tmp_copy, input_size=(3, 32, 32))
-            print("WARNING: The summary function is not counting properly parameters in custom layers")
+            print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
 
     del model_tmp_copy # to save memory
 
@@ -449,15 +364,8 @@ def main_worker(gpu, ngpus_per_node, args):
     data_dir = "~/pytorch_datasets"
     os.makedirs(model_dir, exist_ok=True)
 
-
-    # imagenet mean and std
-    #mean=[0.485, 0.456, 0.406]
-    #std=[0.229, 0.224, 0.225]
-    # cifar10 mean and std
-    mean=[0.4914, 0.4822, 0.4465]
-    std = [0.2023, 0.1994, 0.2010]
-    normalize = transforms.Normalize(mean=mean,
-                                     std=std)
+    normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                                     std=[0.2023, 0.1994, 0.2010])
 
     train_dataset = datasets.CIFAR10(
         root=data_dir,
@@ -574,7 +482,7 @@ def main_worker(gpu, ngpus_per_node, args):
                     'arch': args.arch,
                     'state_dict': model.state_dict(),
                     'best_acc1': best_acc1,
-                    'optimizer' : optimizer,
+                    'optimizer' : optimizer.state_dict(),
                     'lr_scheduler' : lr_scheduler,
                 }, is_best, model_dir)
 
