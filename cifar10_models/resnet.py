@@ -170,7 +170,7 @@ def resnet101():
     return ResNet(Bottleneck, [3,4,23,3], option='B')
 
 def resnet152():
-    return ResNet(Bottleneck, [3,8,36,3], option='B'
+    return ResNet(Bottleneck, [3,8,36,3], option='B')
 
 def test():
     net = resnet18()
