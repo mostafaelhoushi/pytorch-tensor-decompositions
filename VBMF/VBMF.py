@@ -234,7 +234,6 @@ def EVBMF(Y, sigma2=None, H=None):
     threshold = np.sqrt(M*sigma2*(1+tauubar)*(1+alpha/tauubar))
 
     pos = torch.sum(s>threshold)
-    if pos == 0: return np.array([])
 
     #Formula (15) from [2]
     d = torch.mul(s[:pos]/2, \
