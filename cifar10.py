@@ -429,6 +429,11 @@ def main_worker(gpu, ngpus_per_node, args):
             train_log_csv = csv.writer(train_log_file)
             train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
 
+        # initialize lr scheduler according to start_epoch
+        if (args.lr_schedule):
+            for i in range(args.start_epoch):
+                lr_scheduler.step()
+
         start_log_time = time.time()
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
