@@ -457,6 +457,12 @@ def main_worker(gpu, ngpus_per_node, args):
             if (args.lr_schedule):
                 lr_scheduler.step()
 
+            if args.arch in ['resnet1202', 'resnet110'] and epoch == 0:
+                # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
+                # then switch back. In this implementation it will correspond for first epoch.
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = args.lr
+
             # evaluate on validation set
             val_epoch_log = validate(val_loader, model, criterion, args)
             acc1 = val_epoch_log[2]
