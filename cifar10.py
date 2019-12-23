@@ -262,7 +262,7 @@ def main_worker(gpu, ngpus_per_node, args):
         model = model.cuda(args.gpu)
     else:
         # DataParallel will divide and allocate batch_size to all available GPUs
-        if (args.arch.startswith('alexnet') or args.arch.startswith('vgg')) and args.pretrained != "cifar10":
+        if (args.arch.startswith('alexnet')) and args.pretrained != "cifar10":
             if(hasattr(model, 'features')):
                 model.features = torch.nn.DataParallel(model.features)
                 model.cuda()
@@ -449,13 +449,20 @@ def main_worker(gpu, ngpus_per_node, args):
 
             print('current lr {:.4e}'.format(optimizer.param_groups[0]['lr']))
             train_epoch_log = train(train_loader_chosen, model, criterion, optimizer, epoch, args)
-            
+
+            # update learning rate            
             if args.downsize_freq is not None and epoch % args.downsize_freq == 0:
                 for param_group in optimizer.param_groups:
                     param_group['lr'] *= args.downsize_lr_reduction
 
             if (args.lr_schedule):
                 lr_scheduler.step()
+
+            if args.arch in ['resnet1202', 'resnet110'] and epoch == 0:
+                # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
+                # then switch back. In this implementation it will correspond for first epoch.
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = args.lr
 
             # evaluate on validation set
             val_epoch_log = validate(val_loader, model, criterion, args)
