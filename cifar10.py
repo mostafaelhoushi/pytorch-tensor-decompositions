@@ -294,7 +294,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # define learning rate schedule
     if (args.lr_schedule):
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                            milestones=[80, 120, 160, 180], last_epoch=args.start_epoch - 1)
+                                                            milestones=[80, 120, 160, 180], last_epoch= -1) #args.start_epoch - 1)
 
     if args.arch in ['resnet1202', 'resnet110']:
         # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
