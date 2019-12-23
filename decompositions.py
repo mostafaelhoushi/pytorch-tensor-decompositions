@@ -6,11 +6,7 @@ import torch.nn as nn
 from VBMF import VBMF
 
 def decompose_model(model, cp=False):
-    # TODO: Find a better way to avoid having to convert model from CPU to CUDA and back
-    model.cpu()
-    for name, module in reversed(model._modules.items()):
-        #if i >= N - 2:
-        #    break
+    for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
             model._modules[name] = decompose_model(model=module, cp=cp)
@@ -40,8 +36,6 @@ def decompose_model(model, cp=False):
                 decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
 
             model._modules[name] = decomposed
-
-    model.cuda()
 
     return model
 
