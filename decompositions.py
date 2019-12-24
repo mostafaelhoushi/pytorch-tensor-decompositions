@@ -5,12 +5,12 @@ import torch
 import torch.nn as nn
 from VBMF import VBMF
 
-def decompose_model(model, cp=False):
+def decompose_model(model, cp=False, passed_first_conv=False):
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = decompose_model(model=module, cp=cp)
-        if type(module) == nn.Conv2d :
+            model._modules[name] = decompose_model(model=module, cp=cp, passed_first_conv=passed_first_conv)
+        if type(module) == nn.Conv2d:
             conv_layer = module
             if cp:
                 rank = cp_rank(conv_layer)
@@ -25,15 +25,20 @@ def decompose_model(model, cp=False):
                 ranks = tucker_ranks(conv_layer)
                 print(conv_layer, "VBMF Estimated ranks", ranks)
 
-                if (np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels):
-                    print("np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels)")
-                    continue
+                if (passed_first_conv):
+                    if (np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels):
+                        print("np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels)")
+                        continue
 
-                if (any(r <= 0 for r in ranks)):
-                    print("One of the estimated ranks is 0 or less. Skipping layer")
-                    continue
+                    if (any(r <= 0 for r in ranks)):
+                        print("One of the estimated ranks is 0 or less. Skipping layer")
+                        continue
 
-                decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
+                    decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
+                else:
+                    decomposed = tucker1_decomposition_conv_layer(conv_layer, ranks[0])
+
+                    passed_first_conv = True
 
             model._modules[name] = decomposed
 
@@ -191,4 +196,40 @@ def tucker_decomposition_conv_layer(layer, ranks):
     core_layer.weight.data = core
 
     new_layers = [first_layer, core_layer, last_layer]
+    return nn.Sequential(*new_layers)
+
+def tucker1_decomposition_conv_layer(layer, rank):
+    core, [last] = \
+        partial_tucker(layer.weight.data, \
+            modes=[0], ranks=rank, init='svd')
+
+    '''
+    # A pointwise convolution that reduces the channels from S to R3
+    first_layer = torch.nn.Conv2d(in_channels=first.shape[0], \
+            out_channels=first.shape[1], kernel_size=1,
+            stride=1, padding=0, dilation=layer.dilation, bias=False)
+    '''
+
+    # A regular 2D convolution layer with R3 input channels 
+    # and R3 output channels
+    core_layer = torch.nn.Conv2d(in_channels=core.shape[1], \
+            out_channels=core.shape[0], kernel_size=layer.kernel_size,
+            stride=layer.stride, padding=layer.padding, dilation=layer.dilation,
+            bias=False)
+
+    # A pointwise convolution that increases the channels from R4 to T
+    last_layer = torch.nn.Conv2d(in_channels=last.shape[1], \
+        out_channels=last.shape[0], kernel_size=1, stride=1,
+        padding=0, dilation=layer.dilation, bias=True)
+
+    if layer.bias is not None:
+        last_layer.bias.data = layer.bias.data
+
+    #first_layer.weight.data = \
+    #    torch.transpose(first, 1, 0).unsqueeze(-1).unsqueeze(-1)
+    last_layer.weight.data = last.unsqueeze(-1).unsqueeze(-1)
+    core_layer.weight.data = core
+
+    #new_layers = [first_layer, core_layer, last_layer]
+    new_layers = [core_layer, last_layer]
     return nn.Sequential(*new_layers)
