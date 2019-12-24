@@ -41,6 +41,15 @@ def decompose_model(model, cp=False, passed_first_conv=False):
                     passed_first_conv = True
 
             model._modules[name] = decomposed
+        elif type(module) == nn.Linear:
+            linear_layer = module 
+            if not cp: # if Tucker 
+                rank = svd_rank(linear_layer)
+                print(linear_layer, "VBMF Estimated rank", rank)
+
+                decomposed = svd_decomposition_linear_layer(linear_layer, rank)
+
+                model._modules[name] = decomposed
 
     return model
 
@@ -129,6 +138,11 @@ def cp_decomposition_conv_layer_other(layer, rank):
                   depthwise_r_to_r_layer, pointwise_r_to_t_layer]
     return new_layers
 
+def svd_rank(layer):
+    _, S, _ = tl.partial_svd(layer.weight.data, min(layer.weight.data.shape))
+
+    # find number of ranks to obtain 90% of sum of eigenvalues
+    return ((torch.cumsum(S,0) >= 0.9 * torch.sum(S)).nonzero())[0][0].item()
 
 def tucker_ranks(layer):
     """ Unfold the 2 modes of the Tensor the decomposition will 
@@ -225,11 +239,27 @@ def tucker1_decomposition_conv_layer(layer, rank):
     if layer.bias is not None:
         last_layer.bias.data = layer.bias.data
 
-    #first_layer.weight.data = \
-    #    torch.transpose(first, 1, 0).unsqueeze(-1).unsqueeze(-1)
     last_layer.weight.data = last.unsqueeze(-1).unsqueeze(-1)
     core_layer.weight.data = core
 
-    #new_layers = [first_layer, core_layer, last_layer]
     new_layers = [core_layer, last_layer]
+    return nn.Sequential(*new_layers)
+
+def svd_decomposition_linear_layer(layer, rank):
+    [U, S, V] = tl.partial_svd(layer.weight.data, rank)
+
+    first_layer = torch.nn.Linear(in_features=V.shape[1], out_features=V.shape[0], bias=False)
+    second_layer = torch.nn.Linear(in_features=U.shape[1], out_features=U.shape[0], bias=True)
+
+    if layer.bias is not None:
+        second_layer.bias.data = layer.bias.data
+
+    print("V: ", V.shape)
+    print("S: ", S.shape)
+    print("U: ", U.shape)
+
+    first_layer.weight.data = (V.t() * S).t()
+    second_layer.weight.data = U
+
+    new_layers = [first_layer, second_layer]
     return nn.Sequential(*new_layers)
