@@ -3,6 +3,7 @@ from tensorly.decomposition import parafac, partial_tucker
 import numpy as np
 import torch
 import torch.nn as nn
+import traceback
 from VBMF import VBMF
 
 def decompose_model(model, cp=False, passed_first_conv=False):
@@ -22,7 +23,12 @@ def decompose_model(model, cp=False, passed_first_conv=False):
                 
                 decomposed = cp_decomposition_conv_layer(conv_layer, rank)
             else:
-                ranks = tucker_ranks(conv_layer)
+                try:
+                    ranks = tucker_ranks(conv_layer)
+                except:
+                    exceptiondata = traceback.format_exc().splitlines()
+                    print(conv_layer, "Exception occurred when calculating ranks: ", exceptiondata[-1])
+                    continue
                 print(conv_layer, "VBMF Estimated ranks", ranks)
 
                 if (passed_first_conv):
