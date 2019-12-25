@@ -260,10 +260,6 @@ def svd_decomposition_linear_layer(layer, rank):
     if layer.bias is not None:
         second_layer.bias.data = layer.bias.data
 
-    print("V: ", V.shape)
-    print("S: ", S.shape)
-    print("U: ", U.shape)
-
     first_layer.weight.data = (V.t() * S).t()
     second_layer.weight.data = U
 
