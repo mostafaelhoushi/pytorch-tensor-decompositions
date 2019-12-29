@@ -50,7 +50,7 @@ def decompose_model(model, cp=False, passed_first_conv=False):
         elif type(module) == nn.Linear:
             linear_layer = module 
             if not cp: # if Tucker 
-                rank = svd_rank(linear_layer)
+                rank = tucker1_rank(linear_layer)
                 print(linear_layer, "VBMF Estimated rank", rank)
 
                 decomposed = svd_decomposition_linear_layer(linear_layer, rank)
@@ -149,6 +149,14 @@ def svd_rank(layer):
 
     # find number of ranks to obtain 90% of sum of eigenvalues
     return ((torch.cumsum(S,0) >= 0.9 * torch.sum(S)).nonzero())[0][0].item()
+
+def tucker1_rank(layer):
+    weights = layer.weight.data
+
+    _, diag, _, _ = VBMF.EVBMF(weights)
+
+    rank = diag.shape[0]
+    return rank
 
 def tucker_ranks(layer):
     """ Unfold the 2 modes of the Tensor the decomposition will 
