@@ -77,6 +77,8 @@ parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
 parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='using learning rate schedule')
+parser.add_argument('--lr-step-size', dest='lr_step_size', default=30, type=int,
+                    help='number of epochs before decaying learning rate by 0.1')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
@@ -419,7 +421,7 @@ def main_worker(gpu, ngpus_per_node, args):
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args)
+            adjust_learning_rate(optimizer, epoch, args.lr, args.lr_step_size)
 
             # train for one epoch
             train_epoch_log = train(train_loader, model, criterion, optimizer, epoch, args)
@@ -603,9 +605,9 @@ class ProgressMeter(object):
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
 
 
-def adjust_learning_rate(optimizer, epoch, args):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 30))
+def adjust_learning_rate(optimizer, epoch, initial_lr, step_size=30):
+    """Sets the learning rate to the initial LR decayed by 10 every step_size epochs"""
+    lr = initial_lr * (0.1 ** (epoch // step_size))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
