@@ -525,6 +525,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # compute output
         output = model(input)
         loss = criterion(output, target)
+        loss /= args.batch_multiplier
         loss.backward()
 
         # measure accuracy and record loss
@@ -537,7 +538,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             # compute gradient and do SGD step
             optimizer.step()
             optimizer.zero_grad()
-
             sub_batch_count = args.batch_multiplier
 
         # measure elapsed time
