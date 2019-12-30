@@ -58,6 +58,7 @@ parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
 parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
                     help='path to file to load its weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
+parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -216,25 +217,32 @@ def main_worker(gpu, ngpus_per_node, args):
             # create new OrderedDict that does not contain module.
             new_state_dict = OrderedDict()
             for k, v in state_dict.items():
-                if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-                    if (k.startswith("features")):
-                        name = k[0:9] + k[9+7:] # remove "module" after features
-                    else:
-                        name = k
-                else:
-                    name = k[7:] # remove "module" at beginning of name
+                name = k[7:] # remove module.
                 new_state_dict[name] = v
                 
             model.load_state_dict(new_state_dict)
+
+    print("Original Model:")
+    print(model)
+    print("\n\n")
+        
 
     if args.decompose:
         print("Decomposing...")
 
         model = decompose_model(model, args.cp)
-
         print("\n\n")
 
-        print("Decompose Model:")
+        print("Decomposed Model:")
+        print(model)
+        print("\n\n")
+
+    if args.reconstruct:
+        print("Reconstructing...")
+        model = reconstruct_model(model, args.cp)
+        print("\n\n")
+
+        print("Reconstructed Model:")
         print(model)
         print("\n\n")
 
