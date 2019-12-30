@@ -24,6 +24,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 
 from torchsummary import summary
+import optim
 import copy
 
 import tensorly as tl
@@ -65,6 +66,8 @@ parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
+parser.add_argument('-opt', '--optimizer', metavar='OPT', default="SGD", 
+                    help='optimizer algorithm')
 parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N',
                     help='mini-batch size (default: 256), this is the total '
@@ -75,7 +78,7 @@ parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
                          'effective batch size is batch-size * batch-multuplier')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+parser.add_argument('--lr-schedule', dest='lr_schedule', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='using learning rate schedule')
 parser.add_argument('--lr-step-size', dest='lr_step_size', default=30, type=int,
                     help='number of epochs before decaying learning rate by 0.1')
@@ -86,13 +89,13 @@ parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     dest='weight_decay')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
+parser.add_argument('--resume', default='', type=str, metavar='CHECKPOINT_PATH',
                     help='path to latest checkpoint (default: none)')
 parser.add_argument('--opt-ckpt', default='', type=str, metavar='OPT_PATH',
                     help='path to checkpoint file to load optimizer state (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='only evaluate model on validation set')
-parser.add_argument('--pretrained', dest='pretrained', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+parser.add_argument('--pretrained', dest='pretrained', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='use pre-trained model')
 parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
@@ -112,6 +115,10 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
+parser.add_argument('--save-model', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='For Saving the current Model (default: True)')
+parser.add_argument('--print-weights', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='For printing the weights of Model (default: True)')
 parser.add_argument('--desc', type=str, default=None,
                     help='description to append to model directory name')
 
@@ -260,32 +267,44 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             model = torch.nn.DataParallel(model).cuda()
 
-    # define loss function (criterion) and optimizer
+    # define loss function (criterion)
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    # define optimizer
+    optimizer = None 
+    if(args.optimizer.lower() == "sgd"):
+        optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "adadelta"):
+        optimizer = torch.optim.Adadelta(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "adagrad"):
+        optimizer = torch.optim.Adagrad(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "adam"):
+        optimizer = torch.optim.Adam(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "rmsprop"):
+        optimizer = torch.optim.RMSprop(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "radam"):
+        optimizer = optim.RAdam(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    elif(args.optimizer.lower() == "ranger"):
+        optimizer = optim.Ranger(model.parameters(), args.lr, weight_decay=args.weight_decay)
+    else:
+        raise ValueError("Optimizer type: ", args.optimizer, " is not supported or known")
 
+    lr_scheduler = None
     if args.opt_ckpt:
         print("WARNING: Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
 
-        checkpoint = torch.load(args.opt_ckpt)
-        optimizer = checkpoint['optimizer']
-        if 'lr_schedule' in checkpoint:
-            lr_scheduler = checkpoint['lr_schedule']
-        elif (args.lr_schedule):
-            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
-    else:
-        optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                    momentum=args.momentum,
-                                    weight_decay=args.weight_decay)
+        opt_ckpt = torch.load(args.opt_ckpt)
+        if 'optimizer' in opt_ckpt:
+            opt_ckpt = opt_ckpt['optimizer']
+        optimizer.load_state_dict(opt_ckpt)
 
-        if (args.lr_schedule):
-            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                                milestones=[100, 150], last_epoch=args.start_epoch - 1)
+        if 'lr_scheduler' in opt_ckpt:
+            lr_scheduler = opt_ckpt['lr_scheduler']
 
+    # define learning rate schedule
+    if (args.lr_schedule and lr_scheduler is not None):
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                            milestones=[100, 150], last_epoch=args.start_epoch - 1)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -296,36 +315,11 @@ def main_worker(gpu, ngpus_per_node, args):
             best_acc1 = checkpoint['best_acc1']
             if args.gpu is not None:
                 # best_acc1 may be from a checkpoint from a different GPU
-                try:
-                    best_acc1 = best_acc1.to(args.gpu)
-                except:
-                    best_acc1 = best_acc1
-            if 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-                try:
-                    model.load_state_dict(state_dict)
-                except:
-                    # create new OrderedDict that does not contain module.
-                    new_state_dict = OrderedDict()
-                    for k, v in state_dict.items():
-                        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-                            if (k.startswith("features")):
-                                name = k[0:9] + k[9+7:] # remove "module" after features
-                            else:
-                                name = k
-                        else:
-                            name = k[7:] # remove "module" at beginning of name
-                        new_state_dict[name] = v
-        
-                    model.load_state_dict(new_state_dict)
-
-            else:
-                model = checkpoint['model']
-
-            try:
-                optimizer.load_state_dict(checkpoint['optimizer'])
-            except:
-                optimizer = checkpoint['optimizer']
+                best_acc1 = best_acc1.to(args.gpu)
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            if 'lr_scheduler' in checkpoint and checkpoint['lr_scheduler'] is not None:
+                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
@@ -333,10 +327,12 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
     model_tmp_copy = copy.deepcopy(model) # we noticed calling summary() on original model degrades it's accuracy. So we will call summary() on a copy of the model
-    summary(model_tmp_copy, input_size=(3, 224, 224))
-    print("WARNING: The summary function is not counting properly parameters in custom layers")
+    try:
+        summary(model_tmp_copy, input_size=(3, 224, 224))
+        print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
+    except:
+        print("WARNING: Unable to obtain summary of model")
 
     # name model directory
     if (args.decompose):
@@ -351,19 +347,23 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         model_name = '%s/%s' % (args.arch, decompose_label)
 
-    model_dir = os.path.join(os.path.join(os.path.join(os.getcwd(), "models"), "imagenet"), model_name)
-    if not os.path.isdir(model_dir):
-        os.makedirs(model_dir, exist_ok=True)
+    if (args.save_model):
+        model_dir = os.path.join(os.path.join(os.path.join(os.getcwd(), "models"), "imagenet"), model_name)
+        if not os.path.isdir(model_dir):
+            os.makedirs(model_dir, exist_ok=True)
 
-    with open(os.path.join(model_dir, 'command_args.txt'), 'w') as command_args_file:
-        for arg, value in sorted(vars(args).items()):
-            command_args_file.write(arg + ": " + str(value) + "\n")
+        with open(os.path.join(model_dir, 'command_args.txt'), 'w') as command_args_file:
+            for arg, value in sorted(vars(args).items()):
+                command_args_file.write(arg + ": " + str(value) + "\n")
 
-    with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
-        with redirect_stdout(summary_file):
-            # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
-            summary(model_tmp_copy, input_size=(3, 224, 224))
-            print("WARNING: The summary function is not counting properly parameters in custom layers")
+        with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
+            with redirect_stdout(summary_file):
+                try:
+                    # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
+                    summary(model_tmp_copy, input_size=(3, 224, 224))
+                    print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
+                except:
+                    print("WARNING: Unable to obtain summary of model")
 
     del model_tmp_copy # to save memory
 
@@ -401,6 +401,8 @@ def main_worker(gpu, ngpus_per_node, args):
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
+    start_time = time.time()
+
     if args.evaluate:
         start_log_time = time.time()
         val_log = validate(val_loader, model, criterion, args)
@@ -409,13 +411,13 @@ def main_worker(gpu, ngpus_per_node, args):
         with open(os.path.join(model_dir, "test_log.csv"), "w") as test_log_file:
             test_log_csv = csv.writer(test_log_file)
             test_log_csv.writerow(['test_loss', 'test_top1_acc', 'test_top5_acc', 'test_time', 'cumulative_time'])
-            test_log_csv.writerows(val_log + (time.time() - start_log_time,))
+            test_log_csv.writerows(val_log + [(time.time() - start_log_time,)])
     else:
         train_log = []
 
         with open(os.path.join(model_dir, "train_log.csv"), "w") as train_log_file:
             train_log_csv = csv.writer(train_log_file)
-            train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_top5_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_top5_acc', 'test_time'])
+            train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_top5_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_top5_acc', 'test_time', 'cumulative_time'])
 
         start_log_time = time.time()
         for epoch in range(args.start_epoch, args.epochs):
@@ -424,7 +426,10 @@ def main_worker(gpu, ngpus_per_node, args):
             adjust_learning_rate(optimizer, epoch, args.lr, args.lr_step_size)
 
             # train for one epoch
+            print("current lr ", [param['lr'] for param in  optimizer.param_groups])
             train_epoch_log = train(train_loader, model, criterion, optimizer, epoch, args)
+            if (args.lr_schedule):
+                lr_scheduler.step()
 
             # evaluate on validation set
             val_epoch_log = validate(val_loader, model, criterion, args)
@@ -439,15 +444,28 @@ def main_worker(gpu, ngpus_per_node, args):
             is_best = acc1 > best_acc1
             best_acc1 = max(acc1, best_acc1)
 
+            if (args.print_weights):
+                with open(os.path.join(model_dir, 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
+                    with redirect_stdout(weights_log_file):
+                        # Log model's state_dict
+                        print("Model's state_dict:")
+                        # TODO: Use checkpoint above
+                        for param_tensor in model.state_dict():
+                            print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+                            print(model.state_dict()[param_tensor])
+                            print("")
+
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                     and args.rank % ngpus_per_node == 0):
                 if is_best:
                     try:
-                        torch.save(model, os.path.join(model_dir, "model.pth"))
+                        if (args.save_model):
+                            torch.save(model, os.path.join(model_dir, "model.pth"))
                     except: 
                         print("WARNING: Unable to save model.pth")
                     try:
-                        torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
+                        if (args.save_model):
+                            torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
                     except: 
                         print("WARNING: Unable to save weights.pth")
 
@@ -456,9 +474,23 @@ def main_worker(gpu, ngpus_per_node, args):
                     'arch': args.arch,
                     'state_dict': model.state_dict(),
                     'best_acc1': best_acc1,
-                    'optimizer' : optimizer,
+                    'optimizer' : optimizer.state_dict(),
                     'lr_scheduler' : lr_scheduler,
                 }, is_best, model_dir)
+
+    end_time = time.time()
+    print("Total Time:", end_time - start_time )
+
+    if (args.print_weights):
+        with open(os.path.join(model_dir, 'weights_log.txt'), 'w') as weights_log_file:
+            with redirect_stdout(weights_log_file):
+                # Log model's state_dict
+                print("Model's state_dict:")
+                # TODO: Use checkpoint above
+                for param_tensor in model_rounded.state_dict():
+                    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+                    print(model.state_dict()[param_tensor])
+                    print("")
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -486,6 +518,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         # compute output
         output = model(input)
         loss = criterion(output, target)
+        loss /= args.batch_multiplier
         loss.backward()
 
         # measure accuracy and record loss
@@ -498,7 +531,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             # compute gradient and do SGD step
             optimizer.step()
             optimizer.zero_grad()
-
             sub_batch_count = args.batch_multiplier
 
         # measure elapsed time
@@ -547,6 +579,7 @@ def validate(val_loader, model, criterion, args):
 
             if i % args.print_freq == 0:
                 progress.print(i)
+
 
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
