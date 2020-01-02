@@ -31,13 +31,27 @@ It depends on [TensorLy](https://github.com/tensorly/tensorly) for performing te
 
 # Usage
 
-- The repo supports training/inference on both CIFAR10 and Imagenet datasets.
-- The following commands are for Imagenet dataset, if you want to perform the same functionality on CIFAR10, just replace `imagenet.py` with `cifar10.py`.
+The repo supports training/inference on both CIFAR10 and Imagenet datasets.
+
+The following commands are for Imagenet dataset, if you want to perform the same functionality on CIFAR10, just replace `imagenet.py` with `cifar10.py`.
 
 - Training from scratch
 ```
 python imagenet.py --arch resnet50
 ```
+
+this will train ResNet50 from scratch, saving the model. train log, as well as a checkpoint every 10 epochs in `./models/imagenet/resnet50/no_decompose`
+
+- Decompose a pre-trained model using the approach of [Kim et al.](https://arxiv.org/abs/1511.06530):
+```
+python imagenet.py --arch resnet50 --pretrained True --decompose --epochs 15 --lr 0.001 --lr-step-size 5
+```
+
+- Decompose a model that was trained till the 5th epoch:
+```
+python imagenet.py --arch resnet50 --weights ./models/imagenet/resnet50/no_decompose/checkpoint_10.pth.tar --decompose --start-epoch 11
+```
+Here, we use the checkpoint of trainnig from scratch at the 10th epoch
 
 # References
 
