@@ -1,23 +1,43 @@
 # PyTorch Tensor Decompositions
 
-This is an implementation of Tucker and CP decomposition of convolutional layers.
-A blog post about this can be found [here](https://jacobgil.github.io/deeplearning/tensor-decompositions-deep-learning).
+This GitHub repo is an extension to https://github.com/jacobgil/pytorch-tensor-decompositions.
+It provided an implementation to this paper:
+```
+@misc{elhoushi2019accelerating,
+    title={Accelerating Training using Tensor Decomposition},
+    author={Mostafa Elhoushi and Ye Henry Tian and Zihao Chen and Farhan Shafiq and Joey Yiwei Li},
+    year={2019},
+    eprint={1909.05675},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV}
+}
+```
+
+as well as:
+```
+@misc{kim2015compression,
+    title={Compression of Deep Convolutional Neural Networks for Fast and Low Power Mobile Applications},
+    author={Yong-Deok Kim and Eunhyeok Park and Sungjoo Yoo and Taelim Choi and Lu Yang and Dongjun Shin},
+    year={2015},
+    eprint={1511.06530},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV}
+}
+```
+
+It provides an implementation of Tucker and CP decomposition of convolutional layers.
 
 It depends on [TensorLy](https://github.com/tensorly/tensorly) for performing tensor decompositions.
 
 # Usage
 
-- Train a model based on fine tuning VGG16: ``python main.py --train``.
-- There should be a dataset with two categories. One directory for each category. Training data should go into a directory called 'train'.  Testing data should go into a directory called 'test'. This can be controlled with the flags --train_path and --test_path.
-- I used the [Kaggle Cats/Dogs dataset.](https://www.kaggle.com/c/dogs-vs-cats)
-- The model is then saved into a file called "model".
+- The repo supports training/inference on both CIFAR10 and Imagenet datasets.
+- The following commands are for Imagenet dataset, if you want to perform the same functionality on CIFAR10, just replace `imagenet.py` with `cifar10.py`.
 
-- Perform a decomposition: 
-``python main.py --decompose``
-This saves the new model into "decomposed_model".
-It uses the Tucker decomposition by default. To use CP decomposition, pass --cp.
-
-- Fine tune the decomposed model: ``python main.py --fine_tune``
+- Training from scratch
+```
+python imagenet.py --arch resnet50
+```
 
 # References
 
