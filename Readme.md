@@ -1,4 +1,4 @@
-# PyTorch Tensor Decompositions
+# Tensor Decompositions
 
 This GitHub repo is an extension to https://github.com/jacobgil/pytorch-tensor-decompositions.
 It provided an implementation to this paper:
