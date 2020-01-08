@@ -17,6 +17,39 @@ def reconstruct_model(model, cp=False):
             # recurse
             model._modules[name] = reconstruct_model(model=module, cp=cp)
             item = next(iterator, None)
+        elif type(module) == nn.Linear:
+            linear_layers_list = [module]
+            linear_names_list = [name]
+
+            # add all consecutive conv layers to list
+            item = next(iterator, None)
+            while item is not None:
+                name, module = item
+                if type(module) == nn.Linear:
+                    linear_layers_list.append(module)
+                    linear_names_list.append(name)
+                    item = next(iterator, None)
+                else:
+                    break
+            
+            # reconstruct
+            if len(linear_layers_list) > 1:
+                combined_weight = None
+                for i, (layer, name) in enumerate(zip(linear_layers_list, linear_names_list)):
+                    if i == 0:
+                        combined_weight = layer.weight.data
+                    else:
+                        combined_weight = torch.matmul(layer.weight.data, combined_weight)
+
+                    if i < len(linear_layers_list) - 1:
+                        assert(layer.bias is None)
+                        model._modules[name] = torch.nn.Identity() 
+                    else:
+                        assert(layer.bias is not None)
+                        model._modules[name] = torch.nn.Linear(in_features = linear_layers_list[0].in_features, out_features = linear_layers_list[-1].out_features, bias = True)
+                        model._modules[name].weight.data = combined_weight
+                        model._modules[name].bias.data = linear_layers_list[-1].bias.data
+
         elif type(module) == nn.Conv2d:
             conv_layers_list = [module]
             conv_names_list = [name]
@@ -40,11 +73,9 @@ def reconstruct_model(model, cp=False):
                     if(len(conv_layers_list) == 3):
                         [last_layer, core_layer, first_layer] = conv_layers_list
                         [last_name, core_name, first_name] = conv_names_list 
-                        print("BEFORE last_weight: ", last_layer.weight.shape, " core_weight: ", core_layer.weight.shape, " first_weight: ", first_layer.weight.shape)
                         first_weight = first_layer.weight.data.squeeze(-1).squeeze(-1)
                         core_weight = core_layer.weight.data
                         last_weight = torch.transpose(last_layer.weight.data, 1, 0).squeeze(-1).squeeze(-1) 
-                        print("last_weight: ", last_weight.shape, " core_weight: ", core_weight.shape, " first_weight: ", first_weight.shape, )
                         reconstructed_weight = tl.tucker_to_tensor(core_weight, [first_weight, last_weight])
 
                         assert(first_layer.bias is not None)
@@ -65,11 +96,8 @@ def reconstruct_model(model, cp=False):
                     elif(len(conv_layers_list) == 2):
                         [core_layer, last_layer] = conv_layers_list
                         [core_name, last_name] = conv_names_list 
-                        print("BEFORE last_weight: ", last_layer.weight.shape, " core_weight: ", core_layer.weight.shape)
                         core_weight = core_layer.weight.data
-                        last_weight = last_layer.weight.data.squeeze(-1).squeeze(-1) #.contiguous() 
-                        #last_weight = last_weight.view(-1, last_weight.size(-1))
-                        print("last_weight: ", last_weight.shape, " core_weight: ", core_weight.shape)
+                        last_weight = last_layer.weight.data.squeeze(-1).squeeze(-1) 
                         reconstructed_weight = tl.tucker_to_tensor(core_weight, [last_weight])
 
                         assert(core_layer.bias is None)
