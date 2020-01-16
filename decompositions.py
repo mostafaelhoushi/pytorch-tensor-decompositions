@@ -42,6 +42,10 @@ def decompose_model(model, cp=False, passed_first_conv=False):
 
                     decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
                 else:
+                    if (ranks[0] <= 0):
+                        print("The estimated rank is 0 or less. Skipping layer")
+                        continue
+                        
                     decomposed = tucker1_decomposition_conv_layer(conv_layer, ranks[0])
 
                     passed_first_conv = True
