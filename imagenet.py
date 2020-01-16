@@ -217,7 +217,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # create new OrderedDict that does not contain module.
             new_state_dict = OrderedDict()
             for k, v in state_dict.items():
-                name = k[7:] # remove module.
+                name = k.replace("module.", "")
                 new_state_dict[name] = v
                 
             model.load_state_dict(new_state_dict)
