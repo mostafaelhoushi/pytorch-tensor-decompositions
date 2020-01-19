@@ -53,6 +53,11 @@ def tucker_decompose_model(model, passed_first_conv=False):
             rank = tucker1_rank(linear_layer)
             print(linear_layer, "VBMF Estimated rank", rank)
 
+            # hack to deal with the case when rank is very small (happened with ResNet56 on CIFAR10) and could deteriorate accuracy
+            if rank < 2: 
+                rank = svd_rank(linear_layer)
+                print("Will instead use SVD Rank (using 90% rule) of ", rank, "for layer: ", linear_layer)
+
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
 
             model._modules[name] = decomposed
@@ -83,7 +88,7 @@ def cp_decompose_model(model, passed_first_conv=False):
             print(linear_layer, "VBMF Estimated rank", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
-
+           
             model._modules[name] = decomposed
 
     return model
