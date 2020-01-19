@@ -76,8 +76,10 @@ parser.add_argument('--downsize-bm', default=None, type=float,
                     help='factor of which the batch size will be multiplied by during downsizing epochs')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--lr-schedule', dest='lr_schedule', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+parser.add_argument('--lr-schedule', dest='lr_schedule', default='MultiStepLR', choices=['None', 'StepLR', 'MultiStepLR'], 
                     help='using learning rate schedule')
+parser.add_argument('--lr-step-size', default=30, type=int,
+                    help='epoch numbers at which to decay learning rate (only applicable if --lr-schedule is set to StepLR)', dest='lr_step_size')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
@@ -294,9 +296,12 @@ def main_worker(gpu, ngpus_per_node, args):
         raise ValueError("Optimizer type: ", args.optimizer, " is not supported or known")
 
     # define learning rate schedule
-    if (args.lr_schedule):
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                            milestones=[80, 120, 160, 180], last_epoch= -1) #args.start_epoch - 1)
+    if (args.lr_schedule == 'MultiStepLR'):
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 120, 160, 180], gamma=0.1) 
+    elif (args.lr_schedule == 'StepLR'):
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_step_size, gamma=0.1)
+    else:
+        lr_scheduler = None
 
     if args.arch in ['resnet1202', 'resnet110']:
         # for resnet1202 original paper uses lr=0.01 for first 400 minibatches for warm-up
