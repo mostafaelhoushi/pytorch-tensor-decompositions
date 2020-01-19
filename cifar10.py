@@ -48,9 +48,10 @@ parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
 parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
                     help='path to file to load its weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
+parser.add_argument("--type", dest="decompose_type", default="tucker", 
+                    choices=["tucker", "cp"],
+                    help="type of decomposition, if None then no decomposition")
 parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
-parser.add_argument("--cp", dest="cp", action="store_true", \
-                    help="Use cp decomposition. uses tucker by default")
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
@@ -224,7 +225,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.decompose:
         print("Decomposing...")
 
-        model = decompose_model(model, args.cp)
+        model = decompose_model(model, args.decompose_type)
         print("\n\n")
 
         print("Decomposed Model:")
@@ -233,7 +234,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if args.reconstruct:
         print("Reconstructing...")
-        model = reconstruct_model(model, args.cp)
+        model = reconstruct_model(model, args.decompose_type)
         print("\n\n")
 
         print("Reconstructed Model:")
@@ -331,10 +332,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # name model directory
     if (args.decompose):
-        if (args.cp):
-            decompose_label = "cp_decompose"
-        else:
-            decompose_label = "tucker_decompose"
+        decompose_label = args.decompose_type + "_decompose"
     elif (args.reconstruct):
         decompose_label = "reconstruct"
     else:

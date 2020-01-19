@@ -6,60 +6,85 @@ import torch.nn as nn
 import traceback
 from VBMF import VBMF
 
-def decompose_model(model, cp=False, passed_first_conv=False):
+def decompose_model(model, type='tucker'):
+    if type == 'tucker':
+        return tucker_decompose_model(model)
+    elif type == 'cp':
+        return cp_decompose_model(module)
+
+def tucker_decompose_model(model, passed_first_conv=False):
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = decompose_model(model=module, cp=cp, passed_first_conv=passed_first_conv)
+            model._modules[name] = tucker_decompose_model(model=module, passed_first_conv=passed_first_conv)
         if type(module) == nn.Conv2d:
             conv_layer = module
-            if cp:
-                rank = cp_rank(conv_layer)
-                print(conv_layer, "CP Estimated rank", rank)
 
-                if (rank**2 >= conv_layer.in_channels * conv_layer.out_channels):
-                    print("(rank**2 >= conv_layer.in_channels * conv_layer.out_channels")
+            try:
+                ranks = tucker_ranks(conv_layer)
+            except:
+                exceptiondata = traceback.format_exc().splitlines()
+                print(conv_layer, "Exception occurred when calculating ranks: ", exceptiondata[-1])
+                continue
+            print(conv_layer, "VBMF Estimated ranks", ranks)
+
+            if (passed_first_conv):
+                if (np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels):
+                    print("np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels)")
                     continue
-                
-                decomposed = cp_decomposition_conv_layer(conv_layer, rank)
+
+                if (any(r <= 0 for r in ranks)):
+                    print("One of the estimated ranks is 0 or less. Skipping layer")
+                    continue
+
+                decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
             else:
-                try:
-                    ranks = tucker_ranks(conv_layer)
-                except:
-                    exceptiondata = traceback.format_exc().splitlines()
-                    print(conv_layer, "Exception occurred when calculating ranks: ", exceptiondata[-1])
+                if (ranks[0] <= 0):
+                    print("The estimated rank is 0 or less. Skipping layer")
                     continue
-                print(conv_layer, "VBMF Estimated ranks", ranks)
+                    
+                decomposed = tucker1_decomposition_conv_layer(conv_layer, ranks[0])
 
-                if (passed_first_conv):
-                    if (np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels):
-                        print("np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels)")
-                        continue
-
-                    if (any(r <= 0 for r in ranks)):
-                        print("One of the estimated ranks is 0 or less. Skipping layer")
-                        continue
-
-                    decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
-                else:
-                    if (ranks[0] <= 0):
-                        print("The estimated rank is 0 or less. Skipping layer")
-                        continue
-                        
-                    decomposed = tucker1_decomposition_conv_layer(conv_layer, ranks[0])
-
-                    passed_first_conv = True
+                passed_first_conv = True
 
             model._modules[name] = decomposed
         elif type(module) == nn.Linear:
             linear_layer = module 
-            if not cp: # if Tucker 
-                rank = tucker1_rank(linear_layer)
-                print(linear_layer, "VBMF Estimated rank", rank)
+            rank = tucker1_rank(linear_layer)
+            print(linear_layer, "VBMF Estimated rank", rank)
 
-                decomposed = svd_decomposition_linear_layer(linear_layer, rank)
+            decomposed = svd_decomposition_linear_layer(linear_layer, rank)
 
-                model._modules[name] = decomposed
+            model._modules[name] = decomposed
+
+    return model
+
+def cp_decompose_model(model, passed_first_conv=False):
+    for name, module in model._modules.items():
+        if len(list(module.children())) > 0:
+            # recurse
+            model._modules[name] = cp_decompose_model(model=module, passed_first_conv=passed_first_conv)
+        if type(module) == nn.Conv2d:
+            conv_layer = module
+            rank = cp_rank(conv_layer)
+            print(conv_layer, "CP Estimated rank", rank)
+
+            if (rank**2 >= conv_layer.in_channels * conv_layer.out_channels):
+                print("(rank**2 >= conv_layer.in_channels * conv_layer.out_channels")
+                continue
+            
+            decomposed = cp_decomposition_conv_layer(conv_layer, rank)
+
+            model._modules[name] = decomposed
+        elif type(module) == nn.Linear:
+            # TODO: Revisit this part to decide how to deal with linear layer in CP Decomposition
+            linear_layer = module 
+            rank = svd_rank(linear_layer)
+            print(linear_layer, "VBMF Estimated rank", rank)
+
+            decomposed = svd_decomposition_linear_layer(linear_layer, rank)
+
+            model._modules[name] = decomposed
 
     return model
 
