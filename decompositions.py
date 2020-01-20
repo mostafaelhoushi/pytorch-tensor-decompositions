@@ -4,13 +4,47 @@ import numpy as np
 import torch
 import torch.nn as nn
 import traceback
+from collections import OrderedDict
 from VBMF import VBMF
+
+class EnergyThreshold(object):
+
+    def __init__(self, threshold, eidenval=True):
+        """
+        :param threshold: float, threshold to filter small valued sigma:
+        :param eidenval: bool, if True, use eidenval as criterion, otherwise use singular
+        """
+        self.T = threshold
+        assert self.T < 1.0 and self.T > 0.0
+        self.eiden = eidenval
+
+    def __call__(self, sigmas):
+        """
+        select proper numbers of singular values
+        :param sigmas: numpy array obj which containing singular values
+        :return: valid_idx: int, the number of sigmas left after filtering
+        """
+        if self.eiden:
+            energy = sigmas**2
+        else:
+            energy = sigmas
+
+        sum_e = torch.sum(energy)
+        valid_idx = sigmas.size(0)
+        for i in range(energy.size(0)):
+            if energy[:(i+1)].sum()/sum_e >= self.T:
+                valid_idx = i+1
+                break
+
+        return valid_idx
 
 def decompose_model(model, type='tucker'):
     if type == 'tucker':
         return tucker_decompose_model(model)
     elif type == 'cp':
-        return cp_decompose_model(module)
+        return cp_decompose_model(model)
+    elif type == 'channel':
+        return channel_decompose_model(model)
 
 def tucker_decompose_model(model, passed_first_conv=False):
     for name, module in model._modules.items():
@@ -55,7 +89,7 @@ def tucker_decompose_model(model, passed_first_conv=False):
 
             # hack to deal with the case when rank is very small (happened with ResNet56 on CIFAR10) and could deteriorate accuracy
             if rank < 2: 
-                rank = svd_rank(linear_layer)
+                rank = svd_rank_layer(linear_layer)
                 print("Will instead use SVD Rank (using 90% rule) of ", rank, "for layer: ", linear_layer)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
@@ -84,7 +118,7 @@ def cp_decompose_model(model, passed_first_conv=False):
         elif type(module) == nn.Linear:
             # TODO: Revisit this part to decide how to deal with linear layer in CP Decomposition
             linear_layer = module 
-            rank = svd_rank(linear_layer)
+            rank = svd_rank_layer(linear_layer)
             print(linear_layer, "VBMF Estimated rank", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
@@ -92,6 +126,64 @@ def cp_decompose_model(model, passed_first_conv=False):
             model._modules[name] = decomposed
 
     return model
+
+# This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
+def channel_decompose_model(model):
+    '''
+    decouple a input pre-trained model under nuclear regularization
+    with singular value decomposition
+    a single NxCxHxW low-rank filter is decoupled
+    into a NxRx1x1 kernel following a RxCxHxW kernel
+    '''
+    for name, module in model._modules.items():
+        if len(list(module.children())) > 0:
+            # recurse
+            model._modules[name] = channel_decompose_model(model=module)
+        if type(module) == nn.Conv2d:
+            param = module.weight.data
+            dim = param.size()
+            
+            if module.bias:             
+                hasb = True
+                b = module.bias.data
+            else:
+                hasb = False
+            
+            NC = param.view(dim[0], -1) # [N x CHW]
+
+            try:
+                N, sigma, C = torch.svd(NC, some=True)
+                C = C.t()
+                # remain large singular value
+                valid_idx = EnergyThreshold(0.85)(sigma) 
+                N = N[:, :valid_idx].contiguous()
+                sigma = sigma[:valid_idx]
+                C = C[:valid_idx, :]
+            except:
+                    raise Exception('svd failed during decoupling')
+
+            if module.stride == (1, 1):  # when decoupling, only conv with 1x1 stride is considered
+                r = int(sigma.size(0))
+                C = torch.mm(torch.diag(torch.sqrt(sigma)), C)
+                N = torch.mm(N,torch.diag(torch.sqrt(sigma)))
+
+                C = C.view(r,dim[1],dim[2], dim[3])
+                N = N.view(dim[0], r, 1, 1)
+
+                first_layer = nn.Conv2d(dim[1], r, dim[2], 1, 1, bias=False)
+                first_layer.weight.data = C 
+
+                second_layer = nn.Conv2d(r, dim[0], 1, 1, 0, bias=hasb)
+                second_layer.weight.data = N
+                second_layer.bias = module.bias
+
+                new_layers = [first_layer, second_layer]
+                
+                decomposed = nn.Sequential(*new_layers)        
+                model._modules[name] = decomposed
+
+    return model
+
 
 def cp_decomposition_conv_layer(layer, rank):
     """ Gets a conv layer and a target rank, 
@@ -178,11 +270,15 @@ def cp_decomposition_conv_layer_other(layer, rank):
                   depthwise_r_to_r_layer, pointwise_r_to_t_layer]
     return new_layers
 
-def svd_rank(layer):
-    _, S, _ = tl.partial_svd(layer.weight.data, min(layer.weight.data.shape))
+def svd_rank(weight, threshold=0.85, threshold_class=EnergyThreshold):
+    assert(threshold >= 0.0 and threshold <= 1.0)
 
-    # find number of ranks to obtain 90% of sum of eigenvalues
-    return ((torch.cumsum(S,0) >= 0.9 * torch.sum(S)).nonzero())[0][0].item()
+    _, S, _ = torch.svd(weight, some=True) # tl.partial_svd(weight, min(weight.shape))
+
+    return threshold_class(threshold)(S)
+
+def svd_rank_layer(layer):
+    return svd_rank(layer.weight.data)
 
 def tucker1_rank(layer):
     weights = layer.weight.data
@@ -307,3 +403,66 @@ def svd_decomposition_linear_layer(layer, rank):
 
     new_layers = [first_layer, second_layer]
     return nn.Sequential(*new_layers)
+
+# different criterions for sigma selection
+# obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning
+class EnergyThreshold(object):
+
+    def __init__(self, threshold, eidenval=True):
+        """
+        :param threshold: float, threshold to filter small valued sigma:
+        :param eidenval: bool, if True, use eidenval as criterion, otherwise use singular
+        """
+        self.T = threshold
+        assert self.T < 1.0 and self.T > 0.0
+        self.eiden = eidenval
+
+    def __call__(self, sigmas):
+        """
+        select proper numbers of singular values
+        :param sigmas: numpy array obj which containing singular values
+        :return: valid_idx: int, the number of sigmas left after filtering
+        """
+        if self.eiden:
+            energy = sigmas**2
+        else:
+            energy = sigmas
+
+        sum_e = torch.sum(energy)
+        valid_idx = sigmas.size(0)
+        for i in range(energy.size(0)):
+            if energy[:(i+1)].sum()/sum_e >= self.T:
+                valid_idx = i+1
+                break
+
+        return valid_idx
+
+class LinearRate(object):
+
+    def __init__(self, rate):
+        """
+        filter out small valued singulars according to given proportion
+        :param rate: value, left proportion
+        """
+        self.rate = rate
+
+    def __call__(self, sigmas):
+        return int(sigmas.size(0)*self.rate)
+
+class ValueThreshold(object):
+
+    def __init__(self, threshold):
+        """
+        filter out small valued singulars according to a given value threshold
+        :param threshold: float, value threshold
+        """
+        self.T = threshold
+
+    def __call__(self, sigmas):
+        # input sigmas should be a sorted array from large to small
+        valid_idx = sigmas.size(0)
+        for i in range(len(sigmas)):
+            if sigmas[i] < self.T:
+                valid_idx = i
+                break
+        return valid_idx
