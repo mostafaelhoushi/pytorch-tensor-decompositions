@@ -5,6 +5,5 @@ tensorboard==1.13.1
 tensorly==0.4.3
 termcolor==1.1.0
 torch==1.1.0
-torchsummary==1.5.1
 torchvision==0.3.0
 virtualenv==15.0.1
