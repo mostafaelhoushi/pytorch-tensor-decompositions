@@ -441,7 +441,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
             # evaluate on validation set
             val_epoch_log = validate(val_loader, model, criterion, args)
-            acc1 = val_epoch_log[2]
+            acc1 = val_epoch_log[1]
 
             # append to log
             with open(os.path.join(model_dir, "train_log.csv"), "a") as train_log_file:
