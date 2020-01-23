@@ -9,16 +9,14 @@ def main():
     arch = 'vgg19'
 
     for from_epoch in from_epochs:
-        # before decomposing
         before_decomp_record = get_stats_before_decompose(dataset, arch, decomp_type, from_epoch)
-
-        # just after decomposing
         after_decomp_record = get_stats_after_decompose(dataset, arch, decomp_type, from_epoch)
-
-        # after training decomposed
         after_training_decomp_record = get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch)
 
+        correlations = [pearsonr(wf, wl).item() for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
+
         print("Epoch: ", from_epoch, "\n#params before: ", before_decomp_record['num_params'], "\tafter: ", after_training_decomp_record['num_params'])
+        print(correlations)
 
 def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = '_' + str(from_epoch) if from_epoch < 200 else ''
@@ -80,13 +78,27 @@ def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
 
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
 
-def get_weights(model):
-    weights = []
+def get_weights(model, weights=[]):
     for name, module in model._modules.items():
-        if type(module) in [nn.Conv2d, nn.Linear]:
+        if len(list(module.children())) > 0:
+            weights = get_weights(module, weights)
+        elif type(module) == nn.Conv2d or type(module) == nn.Linear:
             weights.append(module.weight)
 
     return weights
+
+def pearsonr(x, y):
+    x = x.flatten()
+    y = y.flatten()
+
+    mean_x = torch.mean(x)
+    mean_y = torch.mean(y)
+    xm = x.sub(mean_x)
+    ym = y.sub(mean_y)
+    r_num = xm.dot(ym)
+    r_den = torch.norm(xm, 2) * torch.norm(ym, 2)
+    r_val = r_num / r_den
+    return r_val
 
 if __name__ == '__main__':
     main()
