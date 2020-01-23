@@ -1,5 +1,6 @@
 import torch
 import torchvision
+import torch.nn as nn
 
 def main():
     decomp_type = 'tucker'
@@ -34,8 +35,9 @@ def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
 
     #num_params1 = sum(p.numel() for p in state_dict.values()) 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    weights = get_weights(model)
 
-    return {'num_params': num_params, 'best_acc': best_acc, 'state_dict': state_dict}
+    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
 
 def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
@@ -55,8 +57,9 @@ def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
 
     #num_params1 = sum(p.numel() for p in state_dict.values()) 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    weights = get_weights(model)
 
-    return {'num_params': num_params, 'best_acc': best_acc, 'state_dict': state_dict}
+    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
 
 def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
@@ -73,8 +76,17 @@ def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
 
     #num_params1 = sum(p.numel() for p in state_dict.values()) 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    weights = get_weights(model)
 
-    return {'num_params': num_params, 'best_acc': best_acc, 'state_dict': state_dict}
+    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
+
+def get_weights(model):
+    weights = []
+    for name, module in model._modules.items():
+        if type(module) in [nn.Conv2d, nn.Linear]:
+            weights.append(module.weight)
+
+    return weights
 
 if __name__ == '__main__':
     main()
