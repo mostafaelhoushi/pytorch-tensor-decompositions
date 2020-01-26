@@ -4,7 +4,7 @@ import torch.nn as nn
 
 def main():
     decomp_type = 'tucker'
-    from_epochs = range(10,210,10)
+    from_epochs = range(0,210,10)
     dataset = 'cifar10'
     arch = 'vgg19'
 
@@ -13,10 +13,15 @@ def main():
         after_decomp_record = get_stats_after_decompose(dataset, arch, decomp_type, from_epoch)
         after_training_decomp_record = get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch)
 
-        correlations = [pearsonr(wf, wl).item() for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
+        correlations = [pearsonr(wf.flatten(), wl.flatten()).item() for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
+        #cosine_similarity = [torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()) for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
+        for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights']):
+            wf.flatten()
+            wl.flatten()
+            print(torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()))
 
         print("Epoch: ", from_epoch, "\n#params before: ", before_decomp_record['num_params'], "\tafter: ", after_training_decomp_record['num_params'])
-        print(correlations)
+        print(cosine_similarity)
 
 def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = '_' + str(from_epoch) if from_epoch < 200 else ''
@@ -88,9 +93,6 @@ def get_weights(model, weights=[]):
     return weights
 
 def pearsonr(x, y):
-    x = x.flatten()
-    y = y.flatten()
-
     mean_x = torch.mean(x)
     mean_y = torch.mean(y)
     xm = x.sub(mean_x)
