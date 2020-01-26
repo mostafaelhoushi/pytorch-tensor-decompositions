@@ -45,6 +45,8 @@ def decompose_model(model, type='tucker'):
         return cp_decompose_model(model)
     elif type == 'channel':
         return channel_decompose_model(model)
+    else:
+        raise Exception(('Unsupported decomposition type passed: ' + type))
 
 def tucker_decompose_model(model, passed_first_conv=False):
     for name, module in model._modules.items():
