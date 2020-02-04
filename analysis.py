@@ -1,12 +1,12 @@
 import torch
 import torchvision
 import torch.nn as nn
-from thop import profile
+from ptflops import get_model_complexity_info
 
 
 def main():
     decomp_type = 'tucker'
-    from_epochs = range(0,210,10)
+    from_epochs = range(10,210,10)
     dataset = 'cifar10'
     arch = 'vgg19'
 
@@ -15,33 +15,35 @@ def main():
         after_decomp_record = get_stats_after_decompose(dataset, arch, decomp_type, from_epoch)
         after_training_decomp_record = get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch)
 
+        '''
         correlations = [pearsonr(wf.flatten(), wl.flatten()).item() for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
         #cosine_similarity = [torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()) for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
         for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights']):
             wf.flatten()
             wl.flatten()
             print(torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()))
-
-        print("Epoch: ", from_epoch, "\n#params before: ", before_decomp_record['num_params'], "\tafter: ", after_training_decomp_record['num_params'])
-        print(cosine_similarity)
-
+        '''
+        print("Epoch: ", from_epoch)
+        print("\tbefore decomp: ", "#params: ", before_decomp_record['num_params'], " flops: ", before_decomp_record['flops'], " training flops: ", before_decomp_record['training_flops'])
+        print("\tafter decomp: ", "#params: ", after_training_decomp_record['num_params'], " flops: ", after_decomp_record['flops'], " training flops: ", after_decomp_record['training_flops'])
+        
 def get_params_flops(model, dataset, epochs):
     if dataset == 'cifar10':
-        input_size = 1, 3, 32, 32
+        input_size = (3, 32, 32)
         num_examples = 50e3
     elif dataset == 'cifar100':
-        input_size = 1, 3, 32, 32
+        input_size = (3, 32, 32)
         num_examples = 50e3
     elif dataset == 'imagenet':
-        input_size = 1, 3, 224, 224
+        input_size = (3, 224, 224)
         num_examples = 1.2e6
     else:
         raise Exception('Unhandled dataset: ', dataset)
     
-    input = torch.randn(*input_size)
-    macs, params = profile(model, inputs=(input, ))
+    flops, params = flops, params = get_model_complexity_info(model, input_size, as_strings=False, print_per_layer_stat=False)
 
-    inference_flops = 2 * macs # two FLOPs per multiply and add
+    inference_flops = flops # two FLOPs per multiply and add
+    # using equation from https://openai.com/blog/ai-and-compute/
     training_flops = inference_flops * 3 * num_examples * epochs
 
     return params, inference_flops, training_flops
@@ -60,14 +62,10 @@ def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     state_dict = checkpoint['state_dict']
     best_acc = checkpoint['best_acc1']
 
-    #num_params1 = sum(p.numel() for p in state_dict.values()) 
-    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print("num_params prev: ", num_params)
-    print("num_params now: ", num_params)
     num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
     weights = get_weights(model)
 
-    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
+    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
 
 def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
@@ -85,11 +83,10 @@ def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
     state_dict = checkpoint['state_dict']
     best_acc = checkpoint['best_acc1']
 
-    #num_params1 = sum(p.numel() for p in state_dict.values()) 
-    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
     weights = get_weights(model)
 
-    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
+    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
 
 def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
@@ -104,11 +101,10 @@ def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
     state_dict = checkpoint['state_dict']
     best_acc = checkpoint['best_acc1']
 
-    #num_params1 = sum(p.numel() for p in state_dict.values()) 
-    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
     weights = get_weights(model)
 
-    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
+    return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
 
 def get_weights(model, weights=[]):
     for name, module in model._modules.items():
