@@ -1,6 +1,8 @@
 import torch
 import torchvision
 import torch.nn as nn
+from thop import profile
+
 
 def main():
     decomp_type = 'tucker'
@@ -23,6 +25,28 @@ def main():
         print("Epoch: ", from_epoch, "\n#params before: ", before_decomp_record['num_params'], "\tafter: ", after_training_decomp_record['num_params'])
         print(cosine_similarity)
 
+def get_params_flops(model, dataset, epochs):
+    if dataset == 'cifar10':
+        input_size = 1, 3, 32, 32
+        num_examples = 50e3
+    elif dataset == 'cifar100':
+        input_size = 1, 3, 32, 32
+        num_examples = 50e3
+    elif dataset == 'imagenet':
+        input_size = 1, 3, 224, 224
+        num_examples = 1.2e6
+    else:
+        raise Exception('Unhandled dataset: ', dataset)
+    
+    input = torch.randn(*input_size)
+    macs, params = profile(model, inputs=(input, ))
+
+    inference_flops = 2 * macs # two FLOPs per multiply and add
+    training_flops = inference_flops * 3 * num_examples * epochs
+
+    return params, inference_flops, training_flops
+    
+
 def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = '_' + str(from_epoch) if from_epoch < 200 else ''
 
@@ -38,6 +62,9 @@ def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
 
     #num_params1 = sum(p.numel() for p in state_dict.values()) 
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print("num_params prev: ", num_params)
+    print("num_params now: ", num_params)
+    num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
     weights = get_weights(model)
 
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights}
