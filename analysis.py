@@ -24,9 +24,10 @@ def main():
             print(torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()))
         '''
         print("Epoch: ", from_epoch)
-        print("\tbefore decomp: ", "#params: ", before_decomp_record['num_params'], " flops: ", before_decomp_record['flops'], " training flops: ", before_decomp_record['training_flops'])
-        print("\tafter decomp: ", "#params: ", after_training_decomp_record['num_params'], " flops: ", after_decomp_record['flops'], " training flops: ", after_decomp_record['training_flops'])
-        
+        print("\tbefore decomp: ", "#params: ", "{:.2e}".format(before_decomp_record['num_params']), " flops: ", "{:.2e}".format(before_decomp_record['flops']), " training flops: ", "{:.2e}".format(before_decomp_record['training_flops']))
+        print("\tafter decomp: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_decomp_record['training_flops']))
+        print("\tafter training: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_training_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_training_decomp_record['training_flops']))
+
 def get_params_flops(model, dataset, epochs):
     if dataset == 'cifar10':
         input_size = (3, 32, 32)
@@ -83,7 +84,7 @@ def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
     state_dict = checkpoint['state_dict']
     best_acc = checkpoint['best_acc1']
 
-    num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
+    num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - from_epoch)
     weights = get_weights(model)
 
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
@@ -100,8 +101,9 @@ def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
     checkpoint = torch.load(checkpoint_file)
     state_dict = checkpoint['state_dict']
     best_acc = checkpoint['best_acc1']
+    epochs = checkpoint['epoch']
 
-    num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
+    num_params, inference_flops, training_flops = get_params_flops(model, dataset, epochs - from_epoch)
     weights = get_weights(model)
 
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
