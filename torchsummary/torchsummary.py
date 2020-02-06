@@ -5,6 +5,7 @@ from torch.autograd import Variable
 from collections import OrderedDict
 import numpy as np
 
+from ptflops import get_model_complexity_info
 
 def summary(model, input_size, batch_size=-1, device=torch.device('cuda:0'), dtypes=None):
     result, params_info = summary_string(
@@ -105,6 +106,8 @@ def summary_string(model, input_size, batch_size=-1, device=torch.device('cuda:0
     total_params_size = abs(total_params * 4. / (1024 ** 2.))
     total_size = total_params_size + total_output_size + total_input_size
 
+    flops, _ = get_model_complexity_info(model, input_size[0], as_strings=False, print_per_layer_stat=False)
+
     summary_str += "================================================================" + "\n"
     summary_str += "Total params: {0:,}".format(total_params) + "\n"
     summary_str += "Trainable params: {0:,}".format(trainable_params) + "\n"
@@ -116,5 +119,6 @@ def summary_string(model, input_size, batch_size=-1, device=torch.device('cuda:0
     summary_str += "Params size (MB): %0.2f" % total_params_size + "\n"
     summary_str += "Estimated Total Size (MB): %0.2f" % total_size + "\n"
     summary_str += "----------------------------------------------------------------" + "\n"
+    summary_str += "Inference FLOPs: {0:,}".format(flops) + "\n"
     # return summary
     return summary_str, (total_params, trainable_params)
