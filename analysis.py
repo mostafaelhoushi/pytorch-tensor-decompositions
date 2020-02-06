@@ -5,14 +5,17 @@ import os
 from ptflops import get_model_complexity_info
 
 base_dir = '/nfs/ptlaby11/home/m00476721/pytorch-tensor-decompositions/'
+training_epochs = 90
 
 def main():
     decomp_type = 'tucker'
-    from_epochs = range(10,210,10)
+    from_epochs = range(10,training_epochs + 10,10)
     dataset = 'imagenet'
     arch = 'resnet50'
 
     for from_epoch in from_epochs:
+        print("Epoch: ", from_epoch)
+
         before_decomp_record = get_stats_before_decompose(dataset, arch, decomp_type, from_epoch)
         after_decomp_record = get_stats_after_decompose(dataset, arch, decomp_type, from_epoch)
         after_training_decomp_record = get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch)
@@ -25,11 +28,15 @@ def main():
             wl.flatten()
             print(torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()))
         '''
-        print("Epoch: ", from_epoch)
-        print("\tbefore decomp: ", "#params: ", "{:.2e}".format(before_decomp_record['num_params']), " flops: ", "{:.2e}".format(before_decomp_record['flops']), " training flops: ", "{:.2e}".format(before_decomp_record['training_flops']))
-        print("\tafter decomp: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_decomp_record['training_flops']))
-        print("\tafter training: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_training_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_training_decomp_record['training_flops']))
-        print("\ttotal training flops: ", " flops: ", "{:.2e}".format(after_training_decomp_record['training_flops'] + before_decomp_record['training_flops']))
+        
+        if (before_decomp_record is not None):
+            print("\tbefore decomp: ", "#params: ", "{:.2e}".format(before_decomp_record['num_params']), " flops: ", "{:.2e}".format(before_decomp_record['flops']), " training flops: ", "{:.2e}".format(before_decomp_record['training_flops']))
+        if (after_decomp_record is not None):
+            print("\tafter decomp: ", "#params: ", "{:.2e}".format(after_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_decomp_record['training_flops']))
+        if (after_training_decomp_record is not None):
+            print("\tafter training: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_training_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_training_decomp_record['training_flops']))
+        if (after_decomp_record is not None and after_training_decomp_record is not None):
+            print("\ttotal training flops: ", " flops: ", "{:.2e}".format(after_training_decomp_record['training_flops'] + before_decomp_record['training_flops']))
 
 def get_params_flops(model, dataset, epochs):
     if dataset == 'cifar10':
@@ -54,9 +61,13 @@ def get_params_flops(model, dataset, epochs):
     
 
 def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
-    from_epoch_label = '_' + str(from_epoch) if from_epoch < 200 else ''
+    from_epoch_label = '_' + str(from_epoch) if from_epoch < training_epochs else ''
 
     model_dir = os.path.join(base_dir, 'models', dataset, arch, 'no_decompose')
+
+    if (os.path.exists(model_dir) is False):
+        #print("\tUnable to find: ", model_dir)
+        return None
 
     model_file = os.path.join(model_dir, 'model.pth')
     checkpoint_file = os.path.join(model_dir, 'checkpoint' + from_epoch_label + '.pth.tar')
@@ -72,14 +83,18 @@ def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
 
 def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
-    from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
+    from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < training_epochs else ''
 
     model_dir = os.path.join(base_dir, 'models', dataset, arch, from_epoch_label + decomp_type + '_decompose')
+
+    if (os.path.exists(model_dir) is False):
+        #print("\tUnable to find: ", model_dir)
+        return None
 
     model_file = os.path.join(model_dir, 'model.pth')
     #TODO: save checkpoint right after decomposing
     first_epoch = from_epoch + 10
-    first_epoch_label = '_' + str(first_epoch) if first_epoch < 200 else ''
+    first_epoch_label = '_' + str(first_epoch) if first_epoch < training_epochs else ''
     checkpoint_file = os.path.join(model_dir, 'checkpoint' + first_epoch_label + '.pth.tar')
 
     model = torch.load(model_file)
@@ -93,9 +108,13 @@ def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
 
 def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
-    from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
+    from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < training_epochs else ''
 
     model_dir = os.path.join(base_dir, 'models', dataset, arch, from_epoch_label + decomp_type + '_decompose')
+
+    if (os.path.exists(model_dir) is False):
+        #print("\tUnable to find: ", model_dir)
+        return None
 
     model_file = os.path.join(model_dir, 'model.pth')
     checkpoint_file = os.path.join(model_dir, 'checkpoint.pth.tar')
