@@ -51,7 +51,7 @@ def get_params_flops(model, dataset, epochs):
     else:
         raise Exception('Unhandled dataset: ', dataset)
     
-    flops, params = flops, params = get_model_complexity_info(model, input_size, as_strings=False, print_per_layer_stat=False)
+    flops, params = get_model_complexity_info(model, input_size, as_strings=False, print_per_layer_stat=False)
 
     inference_flops = flops # two FLOPs per multiply and add
     # using equation from https://openai.com/blog/ai-and-compute/

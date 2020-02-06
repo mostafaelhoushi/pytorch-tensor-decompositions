@@ -45,6 +45,8 @@ def decompose_model(model, type='tucker'):
         return cp_decompose_model(model)
     elif type == 'channel':
         return channel_decompose_model(model)
+    elif type == 'depthwise':
+        return depthwise_decompose_model(model)
     else:
         raise Exception(('Unsupported decomposition type passed: ' + type))
 
@@ -87,7 +89,7 @@ def tucker_decompose_model(model, passed_first_conv=False):
         elif type(module) == nn.Linear:
             linear_layer = module 
             rank = tucker1_rank(linear_layer)
-            print(linear_layer, "VBMF Estimated rank", rank)
+            print(linear_layer, "Tucker1 Estimated rank", rank)
 
             # hack to deal with the case when rank is very small (happened with ResNet56 on CIFAR10) and could deteriorate accuracy
             if rank < 2: 
@@ -121,7 +123,7 @@ def cp_decompose_model(model, passed_first_conv=False):
             # TODO: Revisit this part to decide how to deal with linear layer in CP Decomposition
             linear_layer = module 
             rank = svd_rank_layer(linear_layer)
-            print(linear_layer, "VBMF Estimated rank", rank)
+            print(linear_layer, "SVD Estimated Rank (using 90% rule): ", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
            
@@ -130,17 +132,15 @@ def cp_decompose_model(model, passed_first_conv=False):
     return model
 
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
-def channel_decompose_model(model):
+def channel_decompose_model(model, criterion=EnergyThreshold(0.85)):
     '''
-    decouple a input pre-trained model under nuclear regularization
-    with singular value decomposition
     a single NxCxHxW low-rank filter is decoupled
     into a NxRx1x1 kernel following a RxCxHxW kernel
     '''
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = channel_decompose_model(model=module)
+            model._modules[name] = channel_decompose_model(model=module, criterion=criterion)
         if type(module) == nn.Conv2d:
             param = module.weight.data
             dim = param.size()
@@ -157,7 +157,7 @@ def channel_decompose_model(model):
                 N, sigma, C = torch.svd(NC, some=True)
                 C = C.t()
                 # remain large singular value
-                valid_idx = EnergyThreshold(0.85)(sigma) 
+                valid_idx = criterion(sigma) 
                 N = N[:, :valid_idx].contiguous()
                 sigma = sigma[:valid_idx]
                 C = C[:valid_idx, :]
@@ -183,8 +183,132 @@ def channel_decompose_model(model):
                 
                 decomposed = nn.Sequential(*new_layers)        
                 model._modules[name] = decomposed
+        elif type(module) == nn.Linear:
+            linear_layer = module 
+
+            rank = svd_rank_layer(linear_layer)
+            print(linear_layer, " SVD Rank (using 90% rule): ", rank)
+
+            decomposed = svd_decomposition_linear_layer(linear_layer, rank)
+
+            model._modules[name] = decomposed
 
     return model
+
+# This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
+def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85)):
+    '''
+    a single NxCxHxW low-rank filter is decoupled
+    into a parrallel path composed of point-wise conv followed by depthwise conv
+    '''
+    for name, module in model._modules.items():
+        if len(list(module.children())) > 0:
+            # recurse
+            model._modules[name] = depthwise_decompose_model(model=module, criterion=criterion)
+        elif type(module) == nn.Conv2d:
+            param = module.weight.data
+            dim = param.size()
+            
+            if module.bias:             
+                hasb = True
+                b = module.bias.data
+            else:
+                hasb = False
+
+            try:
+                valid_idx = []
+                # compute average rank according to criterion
+                for i in range(dim[0]):
+                    W = param[i, :, :, :].view(dim[1], -1)
+                    U, sigma, V = torch.svd(W, some=True)
+                    valid_idx.append(criterion(sigma))
+                item_num = min(max(valid_idx), min(dim[2]*dim[3], dim[1]))
+                
+                pw = [param.new_zeros((dim[0], dim[1], 1, 1)) for i in range(item_num)]
+                dw = [param.new_zeros((dim[0], 1, dim[2], dim[3])) for i in range(item_num)]
+
+                # svd decoupling
+                for i in range(dim[0]):
+                    W = param[i, :, :, :].view(dim[1], -1)
+                    U, sigma, V = torch.svd(W, some=True)
+                    V = V.t()
+                    U = U[:, :item_num].contiguous()
+                    V = V[:item_num, :].contiguous()
+                    sigma = torch.diag(torch.sqrt(sigma[:item_num]))
+                    U = U.mm(sigma)
+                    V = sigma.mm(V)
+                    V = V.view(item_num, dim[2], dim[3])
+                    for j in range(item_num):
+                        pw[j][i, :, 0, 0] = U[:, j]
+                        dw[j][i, 0, :, :] = V[j, :, :]
+            except:
+                    raise Exception('svd failed during decoupling')
+
+            new_layers = MultiPathConv(item_num, cin=dim[1], cout=dim[0], kernel=module.kernel_size, stride=module.stride, pad=module.padding, bias=hasb)
+
+            state_dict = new_layers.state_dict()
+            for i in range(item_num):
+                dest = 'path.%d.pw.weight' % i
+                src = '%s.weight' % name
+                #print(dest+' <-- '+src)
+                state_dict[dest].copy_(pw[i])
+
+                dest = 'path.%d.dw.weight' % i
+                #print(dest+' <-- '+src)
+                state_dict[dest].copy_(dw[i])
+
+                if i == 0 and hasb:
+                    dest = 'path.%d.dw.bias' % i
+                    src = '%s.bias' % name
+                    #print(dest+' <-- '+src)
+                    state_dict[dest].copy_(b)
+
+            new_layers.load_state_dict(state_dict)
+            decomposed = new_layers
+            model._modules[name] = decomposed     
+        elif type(module) == nn.Linear:
+            linear_layer = module 
+
+            rank = svd_rank_layer(linear_layer)
+            print(linear_layer, " SVD Rank (using 90% rule): ", rank)
+
+            decomposed = svd_decomposition_linear_layer(linear_layer, rank)
+
+            model._modules[name] = decomposed
+
+    return model
+
+def pd_conv(cin, cout, kernel, stride, pad, bias):
+    return nn.Sequential(
+        OrderedDict([
+            ('pw', nn.Conv2d(cin, cout, 1, 1, 0, bias=False)),
+            ('dw', nn.Conv2d(cout, cout, kernel, stride, pad, groups=cout, bias=bias))
+            ])
+        )
+
+class MultiPathConv(nn.Module):
+
+    '''
+    a sub module structure used for network decouple as follows
+         
+         /--conv 1--\   
+        /            \
+    --> ----conv 2--->+--->
+        \            /
+         \--conv n--/
+    '''
+
+    def __init__(self, n, cin, cout, kernel, pad, stride, bias):
+        super(MultiPathConv, self).__init__()
+
+        self.path_num = n
+        self.path = nn.ModuleList([pd_conv(cin, cout, kernel, stride, pad, bias=(i==0 and bias)) for i in range(n)])
+
+    def forward(self, x):
+        output = 0.0
+        for m in self.path:
+            output += m(x)
+        return output
 
 
 def cp_decomposition_conv_layer(layer, rank):

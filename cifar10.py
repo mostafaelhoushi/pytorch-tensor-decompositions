@@ -49,7 +49,7 @@ parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
                     help='path to file to load its weights (default: none)')
 parser.add_argument("--decompose", dest="decompose", action="store_true")
 parser.add_argument("--type", dest="decompose_type", default="tucker", 
-                    choices=["tucker", "cp", "channel"],
+                    choices=["tucker", "cp", "channel", "depthwise"],
                     help="type of decomposition, if None then no decomposition")
 parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
