@@ -1,14 +1,16 @@
 import torch
 import torchvision
 import torch.nn as nn
+import os
 from ptflops import get_model_complexity_info
 
+base_dir = '/nfs/ptlaby11/home/m00476721/pytorch-tensor-decompositions/'
 
 def main():
     decomp_type = 'tucker'
     from_epochs = range(10,210,10)
-    dataset = 'cifar10'
-    arch = 'vgg19'
+    dataset = 'imagenet'
+    arch = 'resnet50'
 
     for from_epoch in from_epochs:
         before_decomp_record = get_stats_before_decompose(dataset, arch, decomp_type, from_epoch)
@@ -54,10 +56,10 @@ def get_params_flops(model, dataset, epochs):
 def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = '_' + str(from_epoch) if from_epoch < 200 else ''
 
-    model_dir = str('./models/' + dataset + '/' + arch + '/' + 'no_decompose')
+    model_dir = os.path.join(base_dir, 'models', dataset, arch, 'no_decompose')
 
-    model_file = str(model_dir + '/' + 'model.pth')
-    checkpoint_file = str(model_dir + '/' + 'checkpoint' + from_epoch_label + '.pth.tar')
+    model_file = os.path.join(model_dir, 'model.pth')
+    checkpoint_file = os.path.join(model_dir, 'checkpoint' + from_epoch_label + '.pth.tar')
  
     model = torch.load(model_file)
     checkpoint = torch.load(checkpoint_file)
@@ -72,13 +74,13 @@ def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
 def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
 
-    model_dir = str('./models/' + dataset + '/' + arch + '/' + from_epoch_label + decomp_type + '_decompose')
+    model_dir = os.path.join(base_dir, 'models', dataset, arch, from_epoch_label + decomp_type + '_decompose')
 
-    model_file = str(model_dir + '/' + 'model.pth')
+    model_file = os.path.join(model_dir, 'model.pth')
     #TODO: save checkpoint right after decomposing
     first_epoch = from_epoch + 10
     first_epoch_label = '_' + str(first_epoch) if first_epoch < 200 else ''
-    checkpoint_file = str(model_dir + '/' + 'checkpoint' + first_epoch_label + '.pth.tar')
+    checkpoint_file = os.path.join(model_dir, 'checkpoint' + first_epoch_label + '.pth.tar')
 
     model = torch.load(model_file)
     checkpoint = torch.load(checkpoint_file)
@@ -93,10 +95,10 @@ def get_stats_after_decompose(dataset, arch, decomp_type, from_epoch):
 def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = str('from_epoch_' + str(from_epoch) + '_') if from_epoch < 200 else ''
 
-    model_dir = str('./models/' + dataset + '/' + arch + '/' + from_epoch_label + decomp_type + '_decompose')
+    model_dir = os.path.join(base_dir, 'models', dataset, arch, from_epoch_label + decomp_type + '_decompose')
 
-    model_file = str(model_dir + '/' + 'model.pth')
-    checkpoint_file = str(model_dir + '/' + 'checkpoint.pth.tar')
+    model_file = os.path.join(model_dir, 'model.pth')
+    checkpoint_file = os.path.join(model_dir, 'checkpoint.pth.tar')
  
     model = torch.load(model_file)
     checkpoint = torch.load(checkpoint_file)
