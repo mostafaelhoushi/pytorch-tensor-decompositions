@@ -4,14 +4,14 @@ import torch.nn as nn
 import os
 from ptflops import get_model_complexity_info
 
-base_dir = '/nfs/ptlaby11/home/m00476721/pytorch-tensor-decompositions/'
-training_epochs = 90
+base_dir = '.'
+training_epochs = 200
 
 def main():
-    decomp_type = 'tucker'
+    decomp_type = 'channel'
     from_epochs = range(10,training_epochs + 10,10)
-    dataset = 'imagenet'
-    arch = 'resnet50'
+    dataset = 'cifar10'
+    arch = 'vgg19'
 
     for from_epoch in from_epochs:
         print("Epoch: ", from_epoch)
