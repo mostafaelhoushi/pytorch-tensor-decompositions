@@ -27,6 +27,7 @@ def main():
         print("\tbefore decomp: ", "#params: ", "{:.2e}".format(before_decomp_record['num_params']), " flops: ", "{:.2e}".format(before_decomp_record['flops']), " training flops: ", "{:.2e}".format(before_decomp_record['training_flops']))
         print("\tafter decomp: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_decomp_record['training_flops']))
         print("\tafter training: ", "#params: ", "{:.2e}".format(after_training_decomp_record['num_params']), " flops: ", "{:.2e}".format(after_training_decomp_record['flops']), " training flops: ", "{:.2e}".format(after_training_decomp_record['training_flops']))
+        print("\ttotal training flops: ", " flops: ", "{:.2e}".format(after_training_decomp_record['training_flops'] + before_decomp_record['training_flops']))
 
 def get_params_flops(model, dataset, epochs):
     if dataset == 'cifar10':
@@ -103,7 +104,7 @@ def get_stats_after_training_decomposed(dataset, arch, decomp_type, from_epoch):
     best_acc = checkpoint['best_acc1']
     epochs = checkpoint['epoch']
 
-    num_params, inference_flops, training_flops = get_params_flops(model, dataset, epochs - from_epoch)
+    num_params, inference_flops, training_flops = get_params_flops(model, dataset, epochs - from_epoch if epochs - from_epoch > 0 else epochs)
     weights = get_weights(model)
 
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
