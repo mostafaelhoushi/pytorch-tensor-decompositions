@@ -119,6 +119,6 @@ def summary_string(model, input_size, batch_size=-1, device=torch.device('cuda:0
     summary_str += "Params size (MB): %0.2f" % total_params_size + "\n"
     summary_str += "Estimated Total Size (MB): %0.2f" % total_size + "\n"
     summary_str += "----------------------------------------------------------------" + "\n"
-    summary_str += "Inference FLOPs: {0:,}".format(flops) + "\n"
+    summary_str += "Inference FLOPs: {0:,}".format(int(flops)) + "\n"
     # return summary
     return summary_str, (total_params, trainable_params)

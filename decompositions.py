@@ -47,6 +47,8 @@ def decompose_model(model, type='tucker'):
         return channel_decompose_model(model)
     elif type == 'depthwise':
         return depthwise_decompose_model(model)
+    elif type == 'spatial':
+        return spatial_decompose_model(model)
     else:
         raise Exception(('Unsupported decomposition type passed: ' + type))
 
@@ -266,6 +268,77 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85)):
             new_layers.load_state_dict(state_dict)
             decomposed = new_layers
             model._modules[name] = decomposed     
+        elif type(module) == nn.Linear:
+            linear_layer = module 
+
+            rank = svd_rank_layer(linear_layer)
+            print(linear_layer, " SVD Rank (using 90% rule): ", rank)
+
+            decomposed = svd_decomposition_linear_layer(linear_layer, rank)
+
+            model._modules[name] = decomposed
+
+    return model
+
+# This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
+def spatial_decompose_model(model, criterion=EnergyThreshold(0.85)):
+    '''
+    a single NxCxHxW low-rank filter is decoupled
+    into a RxCxVxW kernel and a NxRxWxH kernel
+    '''
+    for name, module in model._modules.items():
+        if len(list(module.children())) > 0:
+            # recurse
+            model._modules[name] = spatial_decompose_model(model=module, criterion=criterion)
+        elif type(module) == nn.Conv2d:
+            # the module should be decoupled
+            param = module.weight.data
+            if module.bias:
+                hasb = True
+                b = module.bias.data # Tensor size N
+            else:
+                hasb = False
+
+            dim = param.size()
+            VH = param.permute(1, 2, 0, 3).contiguous().view(dim[1] * dim[2], -1)
+
+            try:
+                V, sigma, H = torch.svd(VH, some=True)
+                H = H.t()
+                # remain large singular value
+                valid_idx = criterion(sigma)
+                V = V[:, :valid_idx].contiguous()
+                sigma = sigma[:valid_idx]
+                H = H[:valid_idx, :]
+            except:
+                raise Exception('svd failed during decoupling')
+
+            if module.stride == (1,1): # when decoupling, only conv with 1x1 stride is considered
+                r = int(sigma.size(0))
+                H = torch.mm(torch.diag(sigma), H).contiguous()
+
+                H = H.view(r, dim[0], dim[3], 1).permute(1,0,3,2)
+                V = V.view(dim[1], 1, dim[2], r).permute(3,0,2,1)
+
+                new_layers = nn.Sequential(
+                OrderedDict([
+                    ('V', nn.Conv2d(dim[1], r, kernel_size=(int(dim[2]),1),stride=(1, 1),padding=(module.padding[0],0),  bias=False)),
+                    ('H', nn.Conv2d(r, dim[0], kernel_size=(1,int(dim[3])),stride=(1, 1),padding=(0,module.padding[1]),  bias=hasb))])
+                )
+
+                state = new_layers.state_dict()
+                #print(name+'.V.weight' + ' <-- ' + name+'.weight')
+                state['V.weight'].copy_(V)
+                #print(name+'.H.weight' + ' <-- ' + name+'.weight')
+                state['H.weight'].copy_(H)
+
+                if module.bias:
+                    #print(name+'.H.bias' + ' <-- ' + name+'.bias')
+                    state['H.bias'].copy_(b)
+
+                new_layers.load_state_dict(state)
+                decomposed = new_layers
+                model._modules[name] = decomposed
         elif type(module) == nn.Linear:
             linear_layer = module 
 
