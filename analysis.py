@@ -2,7 +2,9 @@ import torch
 import torchvision
 import torch.nn as nn
 import os
+
 from ptflops import get_model_complexity_info
+import torchprof
 
 base_dir = '.'
 training_epochs = 200
@@ -38,27 +40,51 @@ def main():
         if (after_decomp_record is not None and after_training_decomp_record is not None):
             print("\ttotal training flops: ", " flops: ", "{:.2e}".format(after_training_decomp_record['training_flops'] + before_decomp_record['training_flops']))
 
-def get_params_flops(model, dataset, epochs):
+def get_input_size(dataset):
     if dataset == 'cifar10':
         input_size = (3, 32, 32)
-        num_examples = 50e3
     elif dataset == 'cifar100':
         input_size = (3, 32, 32)
-        num_examples = 50e3
     elif dataset == 'imagenet':
         input_size = (3, 224, 224)
+    else:
+        raise Exception('Unhandled dataset: ', dataset)
+
+    return input_size
+
+def get_num_examples(dataset):
+    if dataset == 'cifar10':
+        num_examples = 50e3
+    elif dataset == 'cifar100':
+        num_examples = 50e3
+    elif dataset == 'imagenet':
         num_examples = 1.2e6
     else:
         raise Exception('Unhandled dataset: ', dataset)
-    
-    flops, params = get_model_complexity_info(model, input_size, as_strings=False, print_per_layer_stat=False)
 
-    inference_flops = flops # two FLOPs per multiply and add
+    return num_examples
+
+def get_params_flops(model, dataset, epochs):
+    input_size = get_input_size(dataset)
+    num_examples = get_num_examples(dataset)
+    
+    flops, params = get_model_complexity_info(model, input_size, as_strings=False, print_per_layer_stat=True)
+
+    inference_flops = flops 
     # using equation from https://openai.com/blog/ai-and-compute/
     training_flops = inference_flops * 3 * num_examples * epochs
 
     return params, inference_flops, training_flops
-    
+
+def get_layer_profile(model, dataset, batch_size):
+    input_size = (batch_size, *get_input_size(dataset))
+
+    x = torch.randn(input_size, requires_grad=True)
+    with torchprof.Profile(model, use_cuda=True) as prof:
+        y = model(x)
+        #y.backward()
+
+    print(prof.display(show_events=False))
 
 def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
     from_epoch_label = '_' + str(from_epoch) if from_epoch < training_epochs else ''
@@ -79,6 +105,8 @@ def get_stats_before_decompose(dataset, arch, decomp_type, from_epoch):
 
     num_params, inference_flops, training_flops = get_params_flops(model, dataset, from_epoch - 0)
     weights = get_weights(model)
+
+    get_layer_profile(model, dataset, 128)
 
     return {'num_params': num_params, 'best_acc': best_acc, 'weights': weights, 'flops': inference_flops, 'training_flops': training_flops}
 
