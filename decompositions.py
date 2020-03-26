@@ -147,7 +147,7 @@ def channel_decompose_model(model, criterion=EnergyThreshold(0.85)):
             param = module.weight.data
             dim = param.size()
             
-            if module.bias:             
+            if module.bias is not None:             
                 hasb = True
                 b = module.bias.data
             else:
