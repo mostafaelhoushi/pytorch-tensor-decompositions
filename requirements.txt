@@ -7,3 +7,4 @@ termcolor==1.1.0
 torch==1.1.0
 torchvision==0.3.0
 virtualenv==15.0.1
+ptflops==0.5.2
