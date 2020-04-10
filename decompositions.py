@@ -293,7 +293,7 @@ def spatial_decompose_model(model, criterion=EnergyThreshold(0.85)):
         elif type(module) == nn.Conv2d:
             # the module should be decoupled
             param = module.weight.data
-            if module.bias:
+            if module.bias is not None:
                 hasb = True
                 b = module.bias.data # Tensor size N
             else:
@@ -332,7 +332,7 @@ def spatial_decompose_model(model, criterion=EnergyThreshold(0.85)):
                 #print(name+'.H.weight' + ' <-- ' + name+'.weight')
                 state['H.weight'].copy_(H)
 
-                if module.bias:
+                if module.bias is not None:
                     #print(name+'.H.bias' + ' <-- ' + name+'.bias')
                     state['H.bias'].copy_(b)
 
