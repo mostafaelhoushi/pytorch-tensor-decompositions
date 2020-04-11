@@ -376,6 +376,10 @@ def main_worker(gpu, ngpus_per_node, args):
             for arg, value in sorted(vars(args).items()):
                 command_args_file.write(arg + ": " + str(value) + "\n")
 
+        with open(os.path.join(model_dir, 'model.txt'), 'w') as model_txt_file:
+            with redirect_stdout(model_txt_file):
+                print(model)
+
         with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
             with redirect_stdout(summary_file):
                 try:
