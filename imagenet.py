@@ -65,6 +65,10 @@ parser.add_argument("-t", "--threshold", dest="threshold", type=float, default=N
                     help="energy threshold to calculate SVD rank (not applicable for tucker or cp decomposition)")
 parser.add_argument("-r", "--rank", dest="rank", type=int, default=None,
                     help="use pre-specified rank")
+parser.add_argument("--exclude-first-conv", dest="exclude_first_conv", action="store_true",
+                    help="avoid decomposing first convolution layer")
+parser.add_argument("--exclude-linears", dest="exclude_linears", action="store_true",
+                    help="avoid decomposing fully connected layers")
 parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
@@ -240,7 +244,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.decompose:
         print("Decomposing...")
 
-        model = decompose_model(model, args.decompose_type, args.threshold, args.rank)
+        model = decompose_model(model, args.decompose_type, args.threshold, args.rank, args.exclude_first_conv, args.exclude_linears)
         print("\n\n")
 
         print("Decomposed Model:")
