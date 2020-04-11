@@ -7,6 +7,8 @@ import traceback
 from collections import OrderedDict
 from VBMF import VBMF
 
+# different criterions for sigma selection
+# obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning
 class EnergyThreshold(object):
 
     def __init__(self, threshold, eidenval=True):
@@ -38,19 +40,49 @@ class EnergyThreshold(object):
 
         return valid_idx
 
+class LinearRate(object):
+
+    def __init__(self, rate):
+        """
+        filter out small valued singulars according to given proportion
+        :param rate: value, left proportion
+        """
+        self.rate = rate
+
+    def __call__(self, sigmas):
+        return int(sigmas.size(0)*self.rate)
+
+class ValueThreshold(object):
+
+    def __init__(self, threshold):
+        """
+        filter out small valued singulars according to a given value threshold
+        :param threshold: float, value threshold
+        """
+        self.T = threshold
+
+    def __call__(self, sigmas):
+        # input sigmas should be a sorted array from large to small
+        valid_idx = sigmas.size(0)
+        for i in range(len(sigmas)):
+            if sigmas[i] < self.T:
+                valid_idx = i
+                break
+        return valid_idx
+
 def decompose_model(model, type='tucker', exclude_first_conv=False, exclude_linears=False):
     if type == 'tucker':
         return tucker_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'cp':
         return cp_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'channel':
-        criterion=EnergyThreshold(0.85)
+        criterion = EnergyThreshold(0.85)
         return channel_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
     elif type == 'depthwise':
-        criterion=EnergyThreshold(0.85)
+        criterion = EnergyThreshold(0.85)
         return depthwise_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
     elif type == 'spatial':
-        criterion=EnergyThreshold(0.85)
+        criterion = EnergyThreshold(0.85)
         return spatial_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
     else:
         raise Exception(('Unsupported decomposition type passed: ' + type))
@@ -197,22 +229,34 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_fi
             # recurse
             model._modules[name] = depthwise_decompose_model(module, criterion, exclude_first_conv, exclude_linears, passed_first_conv)
         elif type(module) == nn.Conv2d:
+            conv_layer = module 
+            print(conv_layer)
+
             if passed_first_conv is False:
                 passed_first_conv = True
                 if exclude_first_conv is True:
+                    print("\tExcluding first convolution layer")
                     continue
 
-            conv_layer = module 
+            if conv_layer.kernel_size == (1,1):
+                print("\tNot valid for filter size (1,1)")
+                continue
 
-            decomposed = depthwise_decomposition_conv_layer(conv_layer, name, criterion)
+            rank = svd_rank_depthwise_decompose(conv_layer, criterion)
+            print("\tRank: ", rank)
+
+            decomposed = depthwise_decomposition_conv_layer(conv_layer, name, rank)
             model._modules[name] = decomposed     
         elif type(module) == nn.Linear:
+            linear_layer = module
+            print(linear_layer)
+
             if exclude_linears is True:
-                continue
-            linear_layer = module 
+                print("\tExcluding linear layers")
+                continue 
 
             rank = svd_rank_layer(linear_layer)
-            print(linear_layer, " SVD Rank (using 90% rule): ", rank)
+            print("\tSVD Rank (using 90% rule): ", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
 
@@ -384,6 +428,20 @@ def svd_rank(weight, threshold=0.85, threshold_class=EnergyThreshold):
 def svd_rank_layer(layer):
     return svd_rank(layer.weight.data)
 
+def svd_rank_depthwise_decompose(conv_layer, criterion=EnergyThreshold(0.85)):
+    param = conv_layer.weight.data
+    dim = param.size()    
+    
+    valid_idx = []
+    # compute average rank according to criterion
+    for i in range(dim[0]):
+        W = param[i, :, :, :].view(dim[1], -1)
+        U, sigma, V = torch.svd(W, some=True)
+        valid_idx.append(criterion(sigma))
+
+    item_num = min(max(valid_idx), min(dim[2]*dim[3], dim[1]))
+    return item_num
+
 def tucker1_rank(layer):
     weights = layer.weight.data
 
@@ -554,7 +612,7 @@ def channel_decomposition_conv_layer(module, criterion):
     decomposed = nn.Sequential(*new_layers)        
     return decomposed
 
-def depthwise_decomposition_conv_layer(module, name, criterion):
+def depthwise_decomposition_conv_layer(module, name, rank):
     param = module.weight.data
     dim = param.size()
     
@@ -565,38 +623,30 @@ def depthwise_decomposition_conv_layer(module, name, criterion):
         hasb = False
 
     try:
-        valid_idx = []
-        # compute average rank according to criterion
-        for i in range(dim[0]):
-            W = param[i, :, :, :].view(dim[1], -1)
-            U, sigma, V = torch.svd(W, some=True)
-            valid_idx.append(criterion(sigma))
-        item_num = min(max(valid_idx), min(dim[2]*dim[3], dim[1]))
-        
-        pw = [param.new_zeros((dim[0], dim[1], 1, 1)) for i in range(item_num)]
-        dw = [param.new_zeros((dim[0], 1, dim[2], dim[3])) for i in range(item_num)]
+        pw = [param.new_zeros((dim[0], dim[1], 1, 1)) for i in range(rank)]
+        dw = [param.new_zeros((dim[0], 1, dim[2], dim[3])) for i in range(rank)]
 
         # svd decoupling
         for i in range(dim[0]):
             W = param[i, :, :, :].view(dim[1], -1)
             U, sigma, V = torch.svd(W, some=True)
             V = V.t()
-            U = U[:, :item_num].contiguous()
-            V = V[:item_num, :].contiguous()
-            sigma = torch.diag(torch.sqrt(sigma[:item_num]))
+            U = U[:, :rank].contiguous()
+            V = V[:rank, :].contiguous()
+            sigma = torch.diag(torch.sqrt(sigma[:rank]))
             U = U.mm(sigma)
             V = sigma.mm(V)
-            V = V.view(item_num, dim[2], dim[3])
-            for j in range(item_num):
+            V = V.view(rank, dim[2], dim[3])
+            for j in range(rank):
                 pw[j][i, :, 0, 0] = U[:, j]
                 dw[j][i, 0, :, :] = V[j, :, :]
     except:
             raise Exception('svd failed during decoupling')
 
-    new_layers = MultiPathConv(item_num, cin=dim[1], cout=dim[0], kernel=module.kernel_size, stride=module.stride, pad=module.padding, bias=hasb)
+    new_layers = MultiPathConv(rank, cin=dim[1], cout=dim[0], kernel=module.kernel_size, stride=module.stride, pad=module.padding, bias=hasb)
 
     state_dict = new_layers.state_dict()
-    for i in range(item_num):
+    for i in range(rank):
         dest = 'path.%d.pw.weight' % i
         src = '%s.weight' % name
         #print(dest+' <-- '+src)
@@ -667,66 +717,3 @@ def spatial_decomposition_conv_layer(module, criterion):
 
     new_layers.load_state_dict(state)
     return new_layers
-
-# different criterions for sigma selection
-# obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning
-class EnergyThreshold(object):
-
-    def __init__(self, threshold, eidenval=True):
-        """
-        :param threshold: float, threshold to filter small valued sigma:
-        :param eidenval: bool, if True, use eidenval as criterion, otherwise use singular
-        """
-        self.T = threshold
-        assert self.T < 1.0 and self.T > 0.0
-        self.eiden = eidenval
-
-    def __call__(self, sigmas):
-        """
-        select proper numbers of singular values
-        :param sigmas: numpy array obj which containing singular values
-        :return: valid_idx: int, the number of sigmas left after filtering
-        """
-        if self.eiden:
-            energy = sigmas**2
-        else:
-            energy = sigmas
-
-        sum_e = torch.sum(energy)
-        valid_idx = sigmas.size(0)
-        for i in range(energy.size(0)):
-            if energy[:(i+1)].sum()/sum_e >= self.T:
-                valid_idx = i+1
-                break
-
-        return valid_idx
-
-class LinearRate(object):
-
-    def __init__(self, rate):
-        """
-        filter out small valued singulars according to given proportion
-        :param rate: value, left proportion
-        """
-        self.rate = rate
-
-    def __call__(self, sigmas):
-        return int(sigmas.size(0)*self.rate)
-
-class ValueThreshold(object):
-
-    def __init__(self, threshold):
-        """
-        filter out small valued singulars according to a given value threshold
-        :param threshold: float, value threshold
-        """
-        self.T = threshold
-
-    def __call__(self, sigmas):
-        # input sigmas should be a sorted array from large to small
-        valid_idx = sigmas.size(0)
-        for i in range(len(sigmas)):
-            if sigmas[i] < self.T:
-                valid_idx = i
-                break
-        return valid_idx
