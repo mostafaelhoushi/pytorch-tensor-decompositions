@@ -70,19 +70,24 @@ class ValueThreshold(object):
                 break
         return valid_idx
 
-def decompose_model(model, type='tucker', exclude_first_conv=False, exclude_linears=False):
+def decompose_model(model, type='tucker', threshold=0.85, rank=None, exclude_first_conv=False, exclude_linears=False):
+    criterion = None
+    if rank is not None and threshold is not None:
+        raise Exception("Either threshold or rank can be set. Not both.")
+    elif rank is None:
+        if threshold is None:
+            threshold = 0.85
+        criterion = EnergyThreshold(threshold)
+    
     if type == 'tucker':
         return tucker_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'cp':
         return cp_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'channel':
-        criterion = EnergyThreshold(0.85)
         return channel_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
     elif type == 'depthwise':
-        criterion = EnergyThreshold(0.85)
-        return depthwise_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
+        return depthwise_decompose_model(model, criterion, rank, exclude_first_conv, exclude_linears)
     elif type == 'spatial':
-        criterion = EnergyThreshold(0.85)
         return spatial_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
     else:
         raise Exception(('Unsupported decomposition type passed: ' + type))
@@ -219,7 +224,7 @@ def channel_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_firs
     return model
 
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
-def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_first_conv=False, exclude_linears=False, passed_first_conv=False):
+def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None, exclude_first_conv=False, exclude_linears=False, passed_first_conv=False):
     '''
     a single NxCxHxW low-rank filter is decoupled
     into a parrallel path composed of point-wise conv followed by depthwise conv
@@ -227,10 +232,13 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_fi
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = depthwise_decompose_model(module, criterion, exclude_first_conv, exclude_linears, passed_first_conv)
+            model._modules[name] = depthwise_decompose_model(module, criterion, rank, exclude_first_conv, exclude_linears, passed_first_conv)
         elif type(module) == nn.Conv2d:
             conv_layer = module 
             print(conv_layer)
+
+            param = conv_layer.weight.data
+            dim = param.size()  
 
             if passed_first_conv is False:
                 passed_first_conv = True
@@ -242,7 +250,10 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_fi
                 print("\tNot valid for filter size (1,1)")
                 continue
 
-            rank = svd_rank_depthwise_decompose(conv_layer, criterion)
+            if rank is None:
+                rank = svd_rank_depthwise_decompose(conv_layer, criterion)
+            else:
+                rank = min(rank, min(dim[2]*dim[3], dim[1]))
             print("\tRank: ", rank)
 
             decomposed = depthwise_decomposition_conv_layer(conv_layer, name, rank)
