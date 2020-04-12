@@ -23,7 +23,7 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
-from torchsummary import summary
+import torchsummary
 import optim
 import copy
 
@@ -197,7 +197,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     if args.model:
         if args.arch or args.pretrained:
-            print("WARNING: Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
+            warnings.warn("Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
         model = None
         saved_checkpoint = torch.load(args.model)
         if isinstance(saved_checkpoint, nn.Module):
@@ -260,6 +260,15 @@ def main_worker(gpu, ngpus_per_node, args):
         print(model)
         print("\n\n")
 
+    # print summary of model before parallellizing among different GPUs
+    model_summary = None
+    try:
+        model_summary, model_params_info = torchsummary.summary_string(model, input_size=(3,228,228))
+        print(model_summary)
+    except Exception as e:
+        warnings.warn("Unable to obtain summary of model")
+        print(e)
+
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
@@ -313,7 +322,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     lr_scheduler = None
     if args.opt_ckpt:
-        print("WARNING: Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
+        warnings.warn("Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
 
         opt_ckpt = torch.load(args.opt_ckpt)
         if 'optimizer' in opt_ckpt:
@@ -349,13 +358,6 @@ def main_worker(gpu, ngpus_per_node, args):
 
     cudnn.benchmark = True
 
-    model_tmp_copy = copy.deepcopy(model) # we noticed calling summary() on original model degrades it's accuracy. So we will call summary() on a copy of the model
-    try:
-        summary(model_tmp_copy, input_size=(3, 224, 224))
-        print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
-    except:
-        print("WARNING: Unable to obtain summary of model")
-
     # name model directory
     if (args.decompose):
         decompose_label = args.decompose_type + "_decompose"
@@ -382,14 +384,10 @@ def main_worker(gpu, ngpus_per_node, args):
 
         with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
             with redirect_stdout(summary_file):
-                try:
-                    # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
-                    summary(model_tmp_copy, input_size=(3, 224, 224))
-                    print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
-                except:
-                    print("WARNING: Unable to obtain summary of model")
-
-    del model_tmp_copy # to save memory
+                if (model_summary is not None):
+                    print(model_summary)
+                else:
+                    warnings.warn("Unable to obtain summary of model")
 
     # Data loading code
     traindir = os.path.join(args.data, 'train')
@@ -486,12 +484,12 @@ def main_worker(gpu, ngpus_per_node, args):
                         if (args.save_model):
                             torch.save(model, os.path.join(model_dir, "model.pth"))
                     except: 
-                        print("WARNING: Unable to save model.pth")
+                        warnings.warn("Unable to save model.pth")
                     try:
                         if (args.save_model):
                             torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
                     except: 
-                        print("WARNING: Unable to save weights.pth")
+                        warnings.warn("Unable to save weights.pth")
 
                 save_checkpoint({
                     'epoch': epoch + 1,
