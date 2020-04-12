@@ -221,10 +221,13 @@ def channel_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_firs
 
             model._modules[name] = decomposed
 
+
     return model
 
+#vgg16_mask = [False,True,   True,True,  True,True,True,   True,True,True,   False,False,False ]
+
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
-def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None, exclude_first_conv=False, exclude_linears=False, passed_first_conv=False):
+def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None, exclude_first_conv=False, exclude_linears=False, passed_first_conv=False, mask_conv_layers=None):
     '''
     a single NxCxHxW low-rank filter is decoupled
     into a parrallel path composed of point-wise conv followed by depthwise conv
@@ -232,13 +235,15 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None,
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = depthwise_decompose_model(module, criterion, rank, exclude_first_conv, exclude_linears, passed_first_conv)
+            model._modules[name] = depthwise_decompose_model(module, criterion, rank, exclude_first_conv, exclude_linears, passed_first_conv, mask_conv_layers)
         elif type(module) == nn.Conv2d:
             conv_layer = module 
             print(conv_layer)
 
-            param = conv_layer.weight.data
-            dim = param.size()  
+            # pop the mask list and check the value of current mask
+            enable_current_conv = True
+            if mask_conv_layers is not None:
+                enable_current_conv = mask_conv_layers.pop(0)
 
             if passed_first_conv is False:
                 passed_first_conv = True
@@ -246,9 +251,16 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None,
                     print("\tExcluding first convolution layer")
                     continue
 
+            if enable_current_conv is False:
+                print("\tLayer masked out")
+                continue
+
             if conv_layer.kernel_size == (1,1):
                 print("\tNot valid for filter size (1,1)")
                 continue
+
+            param = conv_layer.weight.data
+            dim = param.size()  
 
             if rank is None:
                 rank = svd_rank_depthwise_decompose(conv_layer, criterion)
