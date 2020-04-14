@@ -72,6 +72,8 @@ parser.add_argument("--exclude-first-conv", dest="exclude_first_conv", action="s
 parser.add_argument("--exclude-linears", dest="exclude_linears", action="store_true",
                     help="avoid decomposing fully connected layers")
 parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
+parser.add_argument("--reset-weights", dest="reset_weights", action="store_true",
+                    help="reset weights of a model after performing decomposition or reconstruction")
 parser.add_argument("--cp", dest="cp", action="store_true", \
                     help="Use cp decomposition. uses tucker by default")
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -145,7 +147,9 @@ def main():
     args = parser.parse_args()
 
     if args.rank is not None and args.threshold is not None:
-        raise Exception("You can only set either rank argument or threshold argument. You can't set both.")
+        raise Exception("Conflicting arguments passed: args.rank and args.threshold.\n\tYou can only set either rank argument or threshold argument. You can't set both.")
+    if args.resume is not None and args.reset_weights:
+        raise Exception("Conflicting arguments passed: args.resume and args.reset_weights.\n\tYou can't resume training from a certain checkpoint and reset weights as well.")
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -357,6 +361,15 @@ def main_worker(gpu, ngpus_per_node, args):
                   .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+    
+    # optionally reset weights
+    def reset_weights(m):
+        reset_parameters = getattr(m, "reset_parameters", None)
+        if callable(reset_parameters):
+            m.reset_parameters()
+
+    if args.reset_weights:
+        model.apply(reset_weights)
 
     cudnn.benchmark = True
 
