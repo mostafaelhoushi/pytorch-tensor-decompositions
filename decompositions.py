@@ -274,8 +274,6 @@ def channel_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_firs
 
     return model
 
-resnet18_set_conv_ranks = [-1, -1, -1, -1,    -1, -1, -1, -1,     -1, -1, -1, -1,    -1, -1, -1, -1,    -1, -1, 3, -1]
-
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
 def depthwise_decompose_model(model, layer_configs):
     '''
@@ -321,7 +319,7 @@ def depthwise_decompose_model(model, layer_configs):
             if set_rank is not None and criterion is not None:
                 raise Exception("Can't have both pre-set rank and criterion for a layer")
             elif criterion is not None:
-                rank = svd_rank_layer(linear_layer)
+                rank = svd_rank_layer(linear_layer, criterion)
             elif set_rank is not None:
                 rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
             elif set_rank is None and criterion is None:
@@ -490,16 +488,13 @@ def cp_decomposition_conv_layer_other(layer, rank):
                   depthwise_r_to_r_layer, pointwise_r_to_t_layer]
     return new_layers
 
-def svd_rank(weight, threshold=0.85, threshold_class=EnergyThreshold):
-    assert(threshold >= 0.0 and threshold <= 1.0)
-
+def svd_rank(weight, criterion):
     _, S, _ = torch.svd(weight, some=True) # tl.partial_svd(weight, min(weight.shape))
 
-    return threshold_class(threshold)(S)
+    return criterion(S)
 
 def svd_rank_layer(layer, criterion=EnergyThreshold(0.85)):
-    #TODO: fix criterion
-    return svd_rank(layer.weight.data)
+    return svd_rank(layer.weight.data, criterion)
 
 def svd_rank_depthwise_decompose(conv_layer, criterion=EnergyThreshold(0.85)):
     param = conv_layer.weight.data
