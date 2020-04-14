@@ -224,10 +224,10 @@ def channel_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_firs
 
     return model
 
-#vgg16_mask = [False,True,   True,True,  True,True,True,   True,True,True,   False,False,False ]
+set_conv_ranks = None # [-1, -1, -1, -1,    -1, -1, -1, -1,     -1, -1, -1, -1,    -1, -1, -1, -1,    -1, -1, 3, -1]
 
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
-def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None, exclude_first_conv=False, exclude_linears=False, passed_first_conv=False, mask_conv_layers=None):
+def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), set_rank=None, exclude_first_conv=False, exclude_linears=False, passed_first_conv=False, mask_conv_layers=None):
     '''
     a single NxCxHxW low-rank filter is decoupled
     into a parrallel path composed of point-wise conv followed by depthwise conv
@@ -235,7 +235,7 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None,
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = depthwise_decompose_model(module, criterion, rank, exclude_first_conv, exclude_linears, passed_first_conv, mask_conv_layers)
+            model._modules[name] = depthwise_decompose_model(module, criterion, set_rank, exclude_first_conv, exclude_linears, passed_first_conv, mask_conv_layers)
         elif type(module) == nn.Conv2d:
             conv_layer = module 
             print(conv_layer)
@@ -244,6 +244,12 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None,
             enable_current_conv = True
             if mask_conv_layers is not None:
                 enable_current_conv = mask_conv_layers.pop(0)
+
+            if set_conv_ranks is not None:
+                current_conv_rank = set_conv_ranks.pop(0)
+                print("current_conv_rank: ", current_conv_rank)
+            else:
+                current_conv_rank = -1
 
             if passed_first_conv is False:
                 passed_first_conv = True
@@ -262,10 +268,15 @@ def depthwise_decompose_model(model, criterion=EnergyThreshold(0.85), rank=None,
             param = conv_layer.weight.data
             dim = param.size()  
 
-            if rank is None:
+            if set_rank is None and current_conv_rank==0:
                 rank = svd_rank_depthwise_decompose(conv_layer, criterion)
+            elif set_rank is None and current_conv_rank==-1:
+                print("\tExcluding layer")
+                continue
+            elif current_conv_rank != -1:
+                rank = min(current_conv_rank, min(dim[2]*dim[3], dim[1]))
             else:
-                rank = min(rank, min(dim[2]*dim[3], dim[1]))
+                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
             print("\tRank: ", rank)
 
             decomposed = depthwise_decomposition_conv_layer(conv_layer, name, rank)
