@@ -108,30 +108,27 @@ def get_per_layer_config(model, criterion=EnergyThreshold(0.85), set_rank=None, 
             # pop the mask list and check the value of current mask
             enable_current_conv = True
             if mask_conv_layers is not None:
-                enable_current_conv = mask_conv_layers.pop(0)
+                enable_current_conv = not mask_conv_layers.pop(0)
 
             if set_conv_ranks is not None:
                 current_conv_rank = set_conv_ranks.pop(0)
+            elif set_rank is not None:
+                current_conv_rank = set_rank
             else:
-                current_conv_rank = -1
+                current_conv_rank = None
+           
+            if not passed_first_conv and exclude_first_conv:
+                layer_configs.update({conv_layer: (None, None)})
+            elif enable_current_conv is False:
+                layer_configs.update({conv_layer: (None, None)})
+            elif current_conv_rank is None:
+                layer_configs.update({conv_layer: (None, criterion)})
+            elif current_conv_rank is not None:
+                layer_configs.update({conv_layer: (current_conv_rank, None)})
 
             if passed_first_conv is False:
                 passed_first_conv = True
 
-            
-            if passed_first_conv and exclude_first_conv:
-                layer_configs.update({conv_layer: (None, None)})
-            elif enable_current_conv is False:
-                layer_configs.update({conv_layer: (None, None)})
-            elif set_rank is None and current_conv_rank==0:
-                layer_configs.update({conv_layer: (None, criterion)})
-            elif set_rank is None and current_conv_rank==-1:
-                print(layer_configs)
-                layer_configs.update({conv_layer: (None, None)})
-            elif current_conv_rank != -1:
-                layer_configs.update({conv_layer: (current_conv_rank, None)})
-            else:
-                layer_configs.update({conv_layer: (set_rank, None)})
         elif type(module) == nn.Linear:
             linear_layer = module
 
