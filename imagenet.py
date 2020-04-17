@@ -29,6 +29,8 @@ import copy
 
 import tensorly as tl
 from decompositions import decompose_model
+from reconstructions import reconstruct_model
+
 import customized_models
 
 default_model_names = sorted(name for name in models.__dict__
@@ -376,13 +378,16 @@ def main_worker(gpu, ngpus_per_node, args):
     # name model directory
     if (args.decompose):
         decompose_label = args.decompose_type + "_decompose"
+    elif (args.reconstruct):
+        decompose_label = "reconstruct"
     else:
         decompose_label = "no_decompose"
 
+    arch_name = "generic" if (args.arch is None or len(args.arch) == 0) else args.arch
     if args.desc is not None and len(args.desc) > 0:
-        model_name = '%s/%s_%s' % (args.arch, args.desc, decompose_label)
+        model_name = '%s/%s_%s' % (arch_name, args.desc, decompose_label)
     else:
-        model_name = '%s/%s' % (args.arch, decompose_label)
+        model_name = '%s/%s' % (arch_name, decompose_label)
 
     if (args.save_model):
         model_dir = os.path.join(os.path.join(os.path.join(os.getcwd(), "models"), "imagenet"), model_name)

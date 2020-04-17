@@ -22,13 +22,12 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
-from torchsummary import summary
+import torchsummary
 import optim
 import copy
 
 import tensorly as tl
 from decompositions import decompose_model
-
 from reconstructions import reconstruct_model
 
 import cifar10_models as models
@@ -42,7 +41,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet20',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
-                        ' (default: resnet18)')
+                        ' (default: resnet20)')
 parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
                     help='path to model file to load both its architecture and weights (default: none)')
 parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
@@ -51,7 +50,21 @@ parser.add_argument("--decompose", dest="decompose", action="store_true")
 parser.add_argument("--type", dest="decompose_type", default="tucker", 
                     choices=["tucker", "cp", "channel", "depthwise", "spatial"],
                     help="type of decomposition, if None then no decomposition")
+parser.add_argument("-t", "--threshold", dest="threshold", type=float, default=None,
+                    help="energy threshold to calculate SVD rank (not applicable for tucker or cp decomposition)")
+parser.add_argument("-r", "--rank", dest="rank", type=int, default=None,
+                    help="use pre-specified rank for all layers")
+parser.add_argument("--conv-ranks", dest="conv_ranks", nargs='+', type=int, default=None,
+                    help="a list of ranks specifying rank for each convolution layer")                    
+parser.add_argument("--exclude-first-conv", dest="exclude_first_conv", action="store_true",
+                    help="avoid decomposing first convolution layer")
+parser.add_argument("--exclude-linears", dest="exclude_linears", action="store_true",
+                    help="avoid decomposing fully connected layers")
 parser.add_argument("--reconstruct", dest="reconstruct", action="store_true")
+parser.add_argument("--reset-weights", dest="reset_weights", action="store_true",
+                    help="reset weights of a model after performing decomposition or reconstruction")
+parser.add_argument("--cp", dest="cp", action="store_true", \
+                    help="Use cp decomposition. uses tucker by default")
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
@@ -85,12 +98,12 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
-parser.add_argument('--opt-ckpt', default='', type=str, metavar='OPT_PATH',
-                    help='path to checkpoint file to load optimizer state (default: none)')
 parser.add_argument('-p', '--print-freq', default=50, type=int,
                     metavar='N', help='print frequency (default: 50)')
-parser.add_argument('--resume', default='', type=str, metavar='CHECKPOINT_PATH',
+parser.add_argument('--resume', default=None, type=str, metavar='CHECKPOINT_PATH',
                     help='path to latest checkpoint (default: none)')
+parser.add_argument('--opt-ckpt', default='', type=str, metavar='OPT_PATH',
+                    help='path to checkpoint file to load optimizer state (default: none)')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='only evaluate model on validation set')
 parser.add_argument('--pretrained', dest='pretrained', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
@@ -99,7 +112,7 @@ parser.add_argument('--freeze', dest='freeze', default=False, type=lambda x:bool
                     help='freeze pre-trained weights')
 parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
-parser.add_argument('--rank', default=-1, type=int,
+parser.add_argument('--node-rank', default=-1, type=int,
                     help='node rank for distributed training')
 parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
                     help='url used to set up distributed training')
@@ -115,6 +128,10 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
 
+parser.add_argument('--save-model', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='For Saving the current Model (default: True)')
+parser.add_argument('--print-weights', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
+                    help='For printing the weights of Model (default: True)')
 parser.add_argument('--desc', type=str, default=None,
                     help='description to append to model directory name')
 
@@ -125,6 +142,11 @@ best_acc1 = 0
 def main():
     tl.set_backend("pytorch")
     args = parser.parse_args()
+
+    if args.rank is not None and args.threshold is not None:
+        raise Exception("Conflicting arguments passed: args.rank and args.threshold.\n\tYou can only set either rank argument or threshold argument. You can't set both.")
+    if args.resume is not None and args.reset_weights:
+        raise Exception("Conflicting arguments passed: args.resume and args.reset_weights.\n\tYou can't resume training from a certain checkpoint and reset weights as well.")
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -167,18 +189,19 @@ def main_worker(gpu, ngpus_per_node, args):
         print("Use GPU: {} for training".format(args.gpu))
 
     if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
+        if args.dist_url == "env://" and args.node_rank == -1:
+            args.node_rank = int(os.environ["RANK"])
         if args.multiprocessing_distributed:
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + gpu
+            args.node_rank = args.node_rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size, rank=args.rank)
+                                world_size=args.world_size, rank=args.node_rank)
+
     # create model
     if args.model:
         if args.arch or args.pretrained:
-            print("WARNING: Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
+            warnings.warn("Ignoring arguments \"arch\" and \"pretrained\" when creating model...")
         model = None
         saved_checkpoint = torch.load(args.model)
         if isinstance(saved_checkpoint, nn.Module):
@@ -197,8 +220,6 @@ def main_worker(gpu, ngpus_per_node, args):
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
-    #TODO: add option for finetune vs. feature extraction that only work if pretrained weights are imagenet    
-
     if args.weights:
         saved_weights = torch.load(args.weights)
         if isinstance(saved_weights, nn.Module):
@@ -214,7 +235,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # create new OrderedDict that does not contain module.
             new_state_dict = OrderedDict()
             for k, v in state_dict.items():
-                name = k[7:] # remove module.
+                name = k.replace("module.", "")
                 new_state_dict[name] = v
                 
             model.load_state_dict(new_state_dict)
@@ -227,7 +248,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.decompose:
         print("Decomposing...")
 
-        model = decompose_model(model, args.decompose_type)
+        model = decompose_model(model, args.decompose_type, args.threshold, args.rank, args.exclude_first_conv, args.exclude_linears, args.conv_ranks)
         print("\n\n")
 
         print("Decomposed Model:")
@@ -242,6 +263,15 @@ def main_worker(gpu, ngpus_per_node, args):
         print("Reconstructed Model:")
         print(model)
         print("\n\n")
+
+    # print summary of model before parallellizing among different GPUs
+    model_summary = None
+    try:
+        model_summary, model_params_info = torchsummary.summary_string(model, input_size=(3,32,32))
+        print(model_summary)
+    except Exception as e:
+        warnings.warn("Unable to obtain summary of model")
+        print(e)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -295,6 +325,18 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         raise ValueError("Optimizer type: ", args.optimizer, " is not supported or known")
 
+    lr_scheduler = None
+    if args.opt_ckpt:
+        warnings.warn("Ignoring arguments \"lr\", \"momentum\", \"weight_decay\", and \"lr_schedule\"")
+
+        opt_ckpt = torch.load(args.opt_ckpt)
+        if 'optimizer' in opt_ckpt:
+            opt_ckpt = opt_ckpt['optimizer']
+        optimizer.load_state_dict(opt_ckpt)
+
+        if 'lr_scheduler' in opt_ckpt:
+            lr_scheduler = opt_ckpt['lr_scheduler']
+
     # define learning rate schedule
     if (args.lr_schedule == 'MultiStepLR'):
         lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[80, 120, 160, 180], gamma=0.1) 
@@ -321,19 +363,23 @@ def main_worker(gpu, ngpus_per_node, args):
                 best_acc1 = best_acc1.to(args.gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
+            if 'lr_scheduler' in checkpoint and checkpoint['lr_scheduler'] is not None:
+                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
+    
+    # optionally reset weights
+    def reset_weights(m):
+        reset_parameters = getattr(m, "reset_parameters", None)
+        if callable(reset_parameters):
+            m.reset_parameters()
+
+    if args.reset_weights:
+        model.apply(reset_weights)
 
     cudnn.benchmark = True
-
-    # TODO: make this summary function deal with parameters that are not named "weight" and "bias"
-    model_tmp_copy = copy.deepcopy(model) # we noticed calling summary() on original model degrades it's accuracy. So we will call summary() on a copy of the model
-    if (args.gpu is not None):
-        model_tmp_copy.cuda(args.gpu)
-    summary(model_tmp_copy, input_size=(3, 32, 32))
-    print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
 
     # name model directory
     if (args.decompose):
@@ -349,20 +395,25 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         model_name = '%s/%s' % (arch_name, decompose_label)
 
-    model_dir = os.path.join(os.path.join(os.path.join(os.getcwd(), "models"), "cifar10"), model_name)
-    if not os.path.isdir(model_dir):
-        os.makedirs(model_dir, exist_ok=True)
+    if (args.save_model):
+        model_dir = os.path.join(os.path.join(os.path.join(os.getcwd(), "models"), "cifar10"), model_name)
+        if not os.path.isdir(model_dir):
+            os.makedirs(model_dir, exist_ok=True)
 
-    with open(os.path.join(model_dir, 'command_args.txt'), 'w') as command_args_file:
-        for arg, value in sorted(vars(args).items()):
-            command_args_file.write(arg + ": " + str(value) + "\n")
+        with open(os.path.join(model_dir, 'command_args.txt'), 'w') as command_args_file:
+            for arg, value in sorted(vars(args).items()):
+                command_args_file.write(arg + ": " + str(value) + "\n")
 
-    with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
-        with redirect_stdout(summary_file):
-            summary(model_tmp_copy, input_size=(3, 32, 32))
-            print("WARNING: The summary function reports duplicate parameters for multi-GPU case")
+        with open(os.path.join(model_dir, 'model.txt'), 'w') as model_txt_file:
+            with redirect_stdout(model_txt_file):
+                print(model)
 
-    del model_tmp_copy # to save memory
+        with open(os.path.join(model_dir, 'model_summary.txt'), 'w') as summary_file:
+            with redirect_stdout(summary_file):
+                if (model_summary is not None):
+                    print(model_summary)
+                else:
+                    warnings.warn("Unable to obtain summary of model")
 
     # Data loading code
     data_dir = "~/pytorch_datasets"
@@ -416,6 +467,8 @@ def main_worker(gpu, ngpus_per_node, args):
         ])),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
+
+    start_time = time.time()
 
     if args.evaluate:
         start_log_time = time.time()
@@ -481,17 +534,30 @@ def main_worker(gpu, ngpus_per_node, args):
             is_best = acc1 > best_acc1
             best_acc1 = max(acc1, best_acc1)
 
+            if (args.print_weights):
+                with open(os.path.join(model_dir, 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
+                    with redirect_stdout(weights_log_file):
+                        # Log model's state_dict
+                        print("Model's state_dict:")
+                        # TODO: Use checkpoint above
+                        for param_tensor in model.state_dict():
+                            print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+                            print(model.state_dict()[param_tensor])
+                            print("")
+
             if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                    and args.rank % ngpus_per_node == 0):
+                    and args.node_rank % ngpus_per_node == 0):
                 if is_best:
                     try:
-                        torch.save(model, os.path.join(model_dir, "model.pth"))
+                        if (args.save_model):
+                            torch.save(model, os.path.join(model_dir, "model.pth"))
                     except: 
-                        print("WARNING: Unable to save model.pth")
+                        warnings.warn("Unable to save model.pth")
                     try:
-                        torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
+                        if (args.save_model):
+                            torch.save(model.state_dict(), os.path.join(model_dir, "weights.pth"))
                     except: 
-                        print("WARNING: Unable to save weights.pth")
+                        warnings.warn("Unable to save weights.pth")
 
                 save_checkpoint({
                     'epoch': epoch + 1,
@@ -501,6 +567,20 @@ def main_worker(gpu, ngpus_per_node, args):
                     'optimizer' : optimizer.state_dict(),
                     'lr_scheduler' : lr_scheduler,
                 }, is_best, model_dir)
+
+    end_time = time.time()
+    print("Total Time:", end_time - start_time )
+
+    if (args.print_weights):
+        with open(os.path.join(model_dir, 'weights_log.txt'), 'w') as weights_log_file:
+            with redirect_stdout(weights_log_file):
+                # Log model's state_dict
+                print("Model's state_dict:")
+                # TODO: Use checkpoint above
+                for param_tensor in model_rounded.state_dict():
+                    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+                    print(model.state_dict()[param_tensor])
+                    print("")
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -590,6 +670,7 @@ def validate(val_loader, model, criterion, args):
             if i % args.print_freq == 0:
                 progress.print(i)
 
+
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f}'
               .format(top1=top1))
@@ -601,10 +682,9 @@ def save_checkpoint(state, is_best, dir_path, filename='checkpoint.pth.tar'):
     torch.save(state, os.path.join(dir_path, filename))
     if is_best:
         shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'model_best.pth.tar'))
-        
+
     if (state['epoch']-1)%10 == 0:
         shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))
-
 
 
 class AverageMeter(object):
