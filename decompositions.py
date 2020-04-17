@@ -291,6 +291,10 @@ def depthwise_decompose_model(model, layer_configs):
                 print("\tNot valid for filter size (1,1)")
                 continue
 
+            if conv_layer.groups > 1:
+                print("\tCan't decompose depthwise conv")
+                continue
+
             param = conv_layer.weight.data
             dim = param.size()  
 
