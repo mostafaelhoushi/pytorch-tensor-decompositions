@@ -70,38 +70,38 @@ class ValueThreshold(object):
                 break
         return valid_idx
 
-def decompose_model(model, type='tucker', threshold=0.85, set_rank=None, exclude_first_conv=False, exclude_linears=False, set_conv_ranks=None, mask_conv_layers=None):
-    criterion = None
-    if set_rank is not None and threshold is not None:
+def decompose_model(model, type='tucker', config):
+    config["criterion"] = None
+    if config["set_rank"] is not None and config["threshold"] is not None:
         raise Exception("Either threshold or rank can be set. Not both.")
-    elif set_rank is None:
-        if threshold is None:
-            threshold = 0.85
-        criterion = EnergyThreshold(threshold)
+    elif config["set_rank"] is None:
+        if config["threshold"] is None:
+            config["threshold"] = 0.85
+        config["criterion"] = EnergyThreshold(threshold)
 
-    layer_configs = get_per_layer_config(model, criterion, set_rank, exclude_first_conv, exclude_linears, set_conv_ranks, mask_conv_layers)
+    layer_configs = get_per_layer_config(model, config)
     
     if type == 'tucker':
         return tucker_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'cp':
         return cp_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'channel':
-        return channel_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
+        return channel_decompose_model(model, layer_configs)
     elif type == 'depthwise':
         return depthwise_decompose_model(model, layer_configs)
     elif type == 'spatial':
-        return spatial_decompose_model(model, criterion, exclude_first_conv, exclude_linears)
+        return spatial_decompose_model(model, layer_configs)
     else:
         raise Exception(('Unsupported decomposition type passed: ' + type))
 
-def get_per_layer_config(model, criterion=EnergyThreshold(0.85), set_rank=None, exclude_first_conv=False, exclude_linears=False, set_conv_ranks=None, mask_conv_layers=None, passed_first_conv=False):
+def get_per_layer_config(model, config, passed_first_conv=False):
     layer_configs = {}
 
     # TODO: handle conflicts in settings
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            layer_configs.update(get_per_layer_config(module, criterion, set_rank, exclude_first_conv, exclude_linears, set_conv_ranks, mask_conv_layers, passed_first_conv))
+            layer_configs.update(get_per_layer_config(module, config, passed_first_conv))
         elif type(module) == nn.Conv2d:
             conv_layer = module 
 
@@ -188,7 +188,7 @@ def tucker_decompose_model(model, exclude_first_conv=False, exclude_linears=Fals
 
             # hack to deal with the case when rank is very small (happened with ResNet56 on CIFAR10) and could deteriorate accuracy
             if rank < 2: 
-                rank = svd_rank_layer(linear_layer)
+                rank = svd_rank_linear(linear_layer)
                 print("Will instead use SVD Rank (using 90% rule) of ", rank, "for layer: ", linear_layer)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
@@ -225,7 +225,7 @@ def cp_decompose_model(model, exclude_first_conv=False, exclude_linears=False, p
 
             # TODO: Revisit this part to decide how to deal with linear layer in CP Decomposition
             linear_layer = module 
-            rank = svd_rank_layer(linear_layer)
+            rank = svd_rank_linear(linear_layer)
             print(linear_layer, "SVD Estimated Rank (using 90% rule): ", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
@@ -235,7 +235,7 @@ def cp_decompose_model(model, exclude_first_conv=False, exclude_linears=False, p
     return model
 
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
-def channel_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_first_conv=False, exclude_linears=False, passed_first_conv=False):
+def channel_decompose_model(model, layer_configs):
     '''
     a single NxCxHxW low-rank filter is decoupled
     into a NxRx1x1 kernel following a RxCxHxW kernel
@@ -243,31 +243,53 @@ def channel_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_firs
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = channel_decompose_model(module, criterion, exclude_first_conv, exclude_linears, passed_first_conv)
+            model._modules[name] = channel_decompose_model(module, layer_configs)
         if type(module) == nn.Conv2d:
-            if passed_first_conv is False:
-                passed_first_conv = True
-                if exclude_first_conv is True:
-                    continue
+            conv_layer = module 
+            print(conv_layer)
 
-            conv_layer = module
+            (set_rank, criterion) = layer_configs[conv_layer]
+
             if module.stride != (1,1):
-                print('Not decomposing', name, ' because its stride is not (1,1)')
+                print('\tNot supported stride (1,1)')
 
-            decomposed = channel_decomposition_conv_layer(conv_layer, criterion)
+            param = conv_layer.weight.data
+            dim = param.size()  
+
+            if set_rank is not None and criterion is not None:
+                raise Exception("Can't have both pre-set rank and criterion for a layer")
+            elif criterion is not None:
+                rank = svd_rank_channel(conv_layer, criterion)
+            elif set_rank is not None:
+                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+            elif set_rank is None and criterion is None:
+                print("\tExcluding layer")
+                continue
+            print("\tRank: ", rank)
+
+            decomposed = channel_decomposition_conv_layer(conv_layer, rank)
             model._modules[name] = decomposed
         elif type(module) == nn.Linear:
-            if exclude_linears is True:
-                continue
-            linear_layer = module 
+            linear_layer = module
+            print(linear_layer)
 
-            rank = svd_rank_layer(linear_layer)
-            print(linear_layer, " SVD Rank (using 90% rule): ", rank)
+            (set_rank, criterion) = layer_configs[conv_layer]
+
+            if set_rank is not None and criterionc is not None:
+                raise Exception("Can't have both pre-set rank and criterion for a layer")
+            elif criterion is not None:
+                rank = svd_rank_linear(linear_layer, criterion)
+            elif set_rank is not None:
+                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+            elif set_rank is None and criterion is None:
+                print("\tExcluding layer")
+                continue
+
+            print("\tRank: ", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
 
             model._modules[name] = decomposed
-
 
     return model
 
@@ -301,7 +323,7 @@ def depthwise_decompose_model(model, layer_configs):
             if set_rank is not None and criterion is not None:
                 raise Exception("Can't have both pre-set rank and criterion for a layer")
             elif criterion is not None:
-                rank = svd_rank_depthwise_decompose(conv_layer, criterion)
+                rank = svd_rank_depthwise(conv_layer, criterion)
             elif set_rank is not None:
                 rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
             elif set_rank is None and criterion is None:
@@ -317,10 +339,10 @@ def depthwise_decompose_model(model, layer_configs):
 
             (set_rank, criterion) = layer_configs[conv_layer]
 
-            if set_rank is not None and criterion is not None:
+            if set_rank is not None and criterionc is not None:
                 raise Exception("Can't have both pre-set rank and criterion for a layer")
             elif criterion is not None:
-                rank = svd_rank_layer(linear_layer, criterion)
+                rank = svd_rank_linear(linear_layer, criterion)
             elif set_rank is not None:
                 rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
             elif set_rank is None and criterion is None:
@@ -336,7 +358,7 @@ def depthwise_decompose_model(model, layer_configs):
     return model
 
 # This function was obtained from https://github.com/yuhuixu1993/Trained-Rank-Pruning/
-def spatial_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_first_conv=False, exclude_linears=False, passed_first_conv=False):
+def spatial_decompose_model(model, layer_configs):
     '''
     a single NxCxHxW low-rank filter is decoupled
     into a RxCxVxW kernel and a NxRxWxH kernel
@@ -344,26 +366,49 @@ def spatial_decompose_model(model, criterion=EnergyThreshold(0.85), exclude_firs
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = spatial_decompose_model(module, criterion, exclude_first_conv, exclude_linears, passed_first_conv)
+            model._modules[name] = spatial_decompose_model(module, layer_configs)
         elif type(module) == nn.Conv2d:
-            if passed_first_conv is False:
-                passed_first_conv = True
-                if exclude_first_conv is True:
-                    continue
+            conv_layer = module 
+            print(conv_layer)
 
-            conv_layer = module
+            (set_rank, criterion) = layer_configs[conv_layer]
+
             if module.stride != (1,1):
                 print('Not decomposing', name, ' because its stride is not (1,1)') 
 
-            decomposed = spatial_decomposition_conv_layer(conv_layer, criterion)
+            param = conv_layer.weight.data
+            dim = param.size()  
+
+            if set_rank is not None and criterion is not None:
+                raise Exception("Can't have both pre-set rank and criterion for a layer")
+            elif criterion is not None:
+                rank = svd_rank_spatial(conv_layer, criterion)
+            elif set_rank is not None:
+                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+            elif set_rank is None and criterion is None:
+                print("\tExcluding layer")
+                continue
+            print("\tRank: ", rank)
+
+            decomposed = spatial_decomposition_conv_layer(conv_layer, rank)
             model._modules[name] = decomposed
         elif type(module) == nn.Linear:
-            if exclude_linears is True:
-                continue
-            linear_layer = module 
+            linear_layer = module
+            print(linear_layer)
 
-            rank = svd_rank_layer(linear_layer)
-            print(linear_layer, " SVD Rank (using 90% rule): ", rank)
+            (set_rank, criterion) = layer_configs[conv_layer]
+
+            if set_rank is not None and criterionc is not None:
+                raise Exception("Can't have both pre-set rank and criterion for a layer")
+            elif criterion is not None:
+                rank = svd_rank_linear(linear_layer, criterion)
+            elif set_rank is not None:
+                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+            elif set_rank is None and criterion is None:
+                print("\tExcluding layer")
+                continue
+
+            print("\tRank: ", rank)
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
 
@@ -494,10 +539,10 @@ def svd_rank(weight, criterion):
 
     return criterion(S)
 
-def svd_rank_layer(layer, criterion=EnergyThreshold(0.85)):
+def svd_rank_linear(layer, criterion=EnergyThreshold(0.85)):
     return svd_rank(layer.weight.data, criterion)
 
-def svd_rank_depthwise_decompose(conv_layer, criterion=EnergyThreshold(0.85)):
+def svd_rank_depthwise(conv_layer, criterion=EnergyThreshold(0.85)):
     param = conv_layer.weight.data
     dim = param.size()    
     
@@ -510,6 +555,32 @@ def svd_rank_depthwise_decompose(conv_layer, criterion=EnergyThreshold(0.85)):
 
     item_num = min(max(valid_idx), min(dim[2]*dim[3], dim[1]))
     return item_num
+
+def svd_rank_channel(conv_layer, criterion=EnergyThreshold(0.85)):
+    param = conv_layer.weight.data
+    dim = param.size()    
+    
+    NC = param.view(dim[0], -1) # [N x CHW]
+
+    N, sigma, C = torch.svd(NC, some=True)
+    C = C.t()
+    # remain large singular value
+    valid_idx = criterion(sigma) 
+
+    return valid_idx
+
+def svd_rank_spatial(conv_layer, criterion=EnergyThreshold(0.85)):
+    param = module.weight.data
+    dim = param.size()    
+    
+    VH = param.permute(1, 2, 0, 3).contiguous().view(dim[1] * dim[2], -1)
+
+    V, sigma, H = torch.svd(VH, some=True)
+    H = H.t()
+    # remain large singular value
+    valid_idx = criterion(sigma)
+
+    return valid_idx
 
 def tucker1_rank(layer):
     weights = layer.weight.data
@@ -635,7 +706,7 @@ def svd_decomposition_linear_layer(layer, rank):
     new_layers = [first_layer, second_layer]
     return nn.Sequential(*new_layers)
 
-def channel_decomposition_conv_layer(module, criterion):
+def channel_decomposition_conv_layer(module, rank):
     param = module.weight.data
     dim = param.size()
     
@@ -647,20 +718,11 @@ def channel_decomposition_conv_layer(module, criterion):
     
     NC = param.view(dim[0], -1) # [N x CHW]
 
-    try:
-        N, sigma, C = torch.svd(NC, some=True)
-        C = C.t()
-        # remain large singular value
-        valid_idx = criterion(sigma) 
-        N = N[:, :valid_idx].contiguous()
-        sigma = sigma[:valid_idx]
-        C = C[:valid_idx, :]
-    except:
-            raise Exception('svd failed during decoupling')
-
-    # when decoupling, only conv with 1x1 stride is considered
-    if (module.stride != (1,1)):
-        return module
+    N, sigma, C = torch.svd(NC, some=True)
+    C = C.t()
+    N = N[:, :rank].contiguous()
+    sigma = sigma[:rank]
+    C = C[:rank, :]
 
     r = int(sigma.size(0))
     C = torch.mm(torch.diag(torch.sqrt(sigma)), C)
@@ -735,7 +797,7 @@ def depthwise_decomposition_conv_layer(module, name, rank):
 
     return new_layers
 
-def spatial_decomposition_conv_layer(module, criterion):
+def spatial_decomposition_conv_layer(module, rank):
     # the module should be decoupled
     param = module.weight.data
     if module.bias is not None:
@@ -750,11 +812,9 @@ def spatial_decomposition_conv_layer(module, criterion):
     try:
         V, sigma, H = torch.svd(VH, some=True)
         H = H.t()
-        # remain large singular value
-        valid_idx = criterion(sigma)
-        V = V[:, :valid_idx].contiguous()
-        sigma = sigma[:valid_idx]
-        H = H[:valid_idx, :]
+        V = V[:, :rank].contiguous()
+        sigma = sigma[:rank]
+        H = H[:rank, :]
     except:
         raise Exception('svd failed during decoupling')
 
