@@ -249,7 +249,7 @@ def main_worker(gpu, ngpus_per_node, args):
     print("\n\n")
         
     # create decomposition configuration
-    decomp_config = {"criterion": None, "threshold":, args.threshold, "rank": args.rank, "exclude_first_conv": args.exclude_first_conv, "exclude_linears": args.exclude_linears, "conv_ranks": args.conv_ranks, "mask_conv_layers": None}
+    decomp_config = {"criterion": None, "threshold": args.threshold, "rank": args.rank, "exclude_first_conv": args.exclude_first_conv, "exclude_linears": args.exclude_linears, "conv_ranks": args.conv_ranks, "mask_conv_layers": None}
 
     if args.decompose:      
         print("Decomposing...")

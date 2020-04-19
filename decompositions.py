@@ -70,11 +70,11 @@ class ValueThreshold(object):
                 break
         return valid_idx
 
-def decompose_model(model, type='tucker', config):
+def decompose_model(model, type, config):
     config["criterion"] = None
-    if config["set_rank"] is not None and config["threshold"] is not None:
+    if config["rank"] is not None and config["threshold"] is not None:
         raise Exception("Either threshold or rank can be set. Not both.")
-    elif config["set_rank"] is None:
+    elif config["rank"] is None:
         if config["threshold"] is None:
             config["threshold"] = 0.85
         config["criterion"] = EnergyThreshold(threshold)
@@ -107,17 +107,17 @@ def get_per_layer_config(model, config, passed_first_conv=False):
 
             # pop the mask list and check the value of current mask
             enable_current_conv = True
-            if mask_conv_layers is not None:
+            if config["mask_conv_layers"] is not None:
                 enable_current_conv = not mask_conv_layers.pop(0)
 
-            if set_conv_ranks is not None:
+            if config["conv_ranks"] is not None:
                 current_conv_rank = set_conv_ranks.pop(0)
-            elif set_rank is not None:
-                current_conv_rank = set_rank
+            elif config["rank"] is not None:
+                current_conv_rank = config["rank"]
             else:
                 current_conv_rank = None
            
-            if not passed_first_conv and exclude_first_conv:
+            if not passed_first_conv and config["exclude_first_conv"]:
                 layer_configs.update({conv_layer: (None, None)})
             elif enable_current_conv is False:
                 layer_configs.update({conv_layer: (None, None)})
@@ -132,7 +132,7 @@ def get_per_layer_config(model, config, passed_first_conv=False):
         elif type(module) == nn.Linear:
             linear_layer = module
 
-            if exclude_linears is True:
+            if config["exclude_linears"] is True:
                 layer_configs.update({linear_layer: (None, None)})
             else:
                 layer_configs.update({linear_layer: (None, criterion)})
@@ -252,6 +252,7 @@ def channel_decompose_model(model, layer_configs):
 
             if module.stride != (1,1):
                 print('\tNot supported stride (1,1)')
+                continue
 
             param = conv_layer.weight.data
             dim = param.size()  
