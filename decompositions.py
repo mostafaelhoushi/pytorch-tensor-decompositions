@@ -77,12 +77,12 @@ def decompose_model(model, type, config):
     elif config["rank"] is None:
         if config["threshold"] is None:
             config["threshold"] = 0.85
-        config["criterion"] = EnergyThreshold(threshold)
+        config["criterion"] = EnergyThreshold(config["threshold"])
 
-    layer_configs = get_per_layer_config(model, config)
+    layer_configs = get_per_layer_config(model, config, type)
     
     if type == 'tucker':
-        return tucker_decompose_model(model, exclude_first_conv, exclude_linears)
+        return tucker_decompose_model(model, layer_configs)
     elif type == 'cp':
         return cp_decompose_model(model, exclude_first_conv, exclude_linears)
     elif type == 'channel':
@@ -94,14 +94,14 @@ def decompose_model(model, type, config):
     else:
         raise Exception(('Unsupported decomposition type passed: ' + type))
 
-def get_per_layer_config(model, config, passed_first_conv=False):
+def get_per_layer_config(model, config, decomp_type, passed_first_conv=False):
     layer_configs = {}
 
     # TODO: handle conflicts in settings
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            layer_configs.update(get_per_layer_config(module, config, passed_first_conv))
+            layer_configs.update(get_per_layer_config(module, config, decomp_type, passed_first_conv))
         elif type(module) == nn.Conv2d:
             conv_layer = module 
 
@@ -111,7 +111,10 @@ def get_per_layer_config(model, config, passed_first_conv=False):
                 enable_current_conv = not mask_conv_layers.pop(0)
 
             if config["conv_ranks"] is not None:
-                current_conv_rank = set_conv_ranks.pop(0)
+                if decomp_type != "tucker" or passed_first_conv is False:
+                    current_conv_rank = config["conv_ranks"].pop(0)
+                else:
+                    current_conv_rank = [config["conv_ranks"].pop(0), config["conv_ranks"].pop(0)]
             elif config["rank"] is not None:
                 current_conv_rank = config["rank"]
             else:
@@ -125,7 +128,7 @@ def get_per_layer_config(model, config, passed_first_conv=False):
                 layer_configs.update({conv_layer: (None, criterion)})
             elif current_conv_rank is not None:
                 layer_configs.update({conv_layer: (current_conv_rank, None)})
-
+                
             if passed_first_conv is False:
                 passed_first_conv = True
 
@@ -139,28 +142,42 @@ def get_per_layer_config(model, config, passed_first_conv=False):
 
     return layer_configs
 
-def tucker_decompose_model(model, exclude_first_conv=False, exclude_linears=False, passed_first_conv=False):
+def tucker_decompose_model(model, layer_configs):
+    '''
+    decompose filter NxCxHxW to 3 filters:
+    R1xCx1x1 , R2xR1xHxW, and NxR2x1x1
+
+    Unlike other decomposition methods, it requires 2 ranks
+    '''
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
             # recurse
-            model._modules[name] = tucker_decompose_model(module, exclude_first_conv, exclude_linears, passed_first_conv)
+            model._modules[name] = tucker_decompose_model(module, layer_configs)
         elif type(module) == nn.Conv2d:
-            if passed_first_conv is False:
-                passed_first_conv = True
-                if exclude_first_conv is True:
-                    continue
+            conv_layer = module 
+            print(conv_layer)
 
-            conv_layer = module
+            (set_ranks, criterion) = layer_configs[conv_layer]
 
-            try:
+            if set_ranks is not None and criterion is not None:
+                raise Exception("Can't have both pre-set rank and criterion for a layer")
+            elif criterion is not None:
                 ranks = tucker_ranks(conv_layer)
-            except:
-                exceptiondata = traceback.format_exc().splitlines()
-                print(conv_layer, "Exception occurred when calculating ranks: ", exceptiondata[-1])
+            elif set_ranks is not None:
+                ranks = set_ranks
+            elif set_ranks is None and criterion is None:
+                print("\tExcluding layer")
                 continue
-            print(conv_layer, "VBMF Estimated ranks", ranks)
+            print("\tRanks: ", ranks)
 
-            if (passed_first_conv):
+            # check if Tucker-1 rank or Tucker-2 ranks
+            if np.isscalar(ranks):
+                rank = ranks
+                is_tucker2 = False
+            else:
+                is_tucker2 = True
+
+            if (is_tucker2):
                 if (np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels):
                     print("np.prod(ranks) >= conv_layer.in_channels * conv_layer.out_channels)")
                     continue
@@ -171,25 +188,34 @@ def tucker_decompose_model(model, exclude_first_conv=False, exclude_linears=Fals
 
                 decomposed = tucker_decomposition_conv_layer(conv_layer, ranks)
             else:
-                if (ranks[0] <= 0):
+                if (rank <= 0):
                     print("The estimated rank is 0 or less. Skipping layer")
                     continue
                     
-                decomposed = tucker1_decomposition_conv_layer(conv_layer, ranks[0])
+                decomposed = tucker1_decomposition_conv_layer(conv_layer, rank)
 
             model._modules[name] = decomposed
         elif type(module) == nn.Linear:
-            if exclude_linears is True:
-                continue
-            
-            linear_layer = module 
-            rank = tucker1_rank(linear_layer)
-            print(linear_layer, "Tucker1 Estimated rank", rank)
+            linear_layer = module
+            print(linear_layer)
 
-            # hack to deal with the case when rank is very small (happened with ResNet56 on CIFAR10) and could deteriorate accuracy
-            if rank < 2: 
-                rank = svd_rank_linear(linear_layer)
-                print("Will instead use SVD Rank (using 90% rule) of ", rank, "for layer: ", linear_layer)
+            (set_rank, criterion) = layer_configs[linear_layer]
+
+            if set_rank is not None and criterion is not None:
+                raise Exception("Can't have both pre-set rank and criterion for a layer")
+            elif criterion is not None:
+                rank = tucker1_rank(linear_layer)
+
+                print(linear_layer, "Tucker1 Estimated rank", rank)
+                # hack to deal with the case when rank is very small (happened with ResNet56 on CIFAR10) and could deteriorate accuracy
+                if rank < 2: 
+                    rank = svd_rank_linear(linear_layer)
+                    print("Will instead use SVD Rank (using 90% rule) of ", rank, "for layer: ", linear_layer)
+            elif set_rank is not None:
+                rank = min(set_rank, dim[1])
+            elif set_rank is None and criterion is None:
+                print("\tExcluding layer")
+                continue
 
             decomposed = svd_decomposition_linear_layer(linear_layer, rank)
 
@@ -262,7 +288,7 @@ def channel_decompose_model(model, layer_configs):
             elif criterion is not None:
                 rank = svd_rank_channel(conv_layer, criterion)
             elif set_rank is not None:
-                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+                rank = min(set_rank, dim[1])
             elif set_rank is None and criterion is None:
                 print("\tExcluding layer")
                 continue
@@ -274,14 +300,14 @@ def channel_decompose_model(model, layer_configs):
             linear_layer = module
             print(linear_layer)
 
-            (set_rank, criterion) = layer_configs[conv_layer]
+            (set_rank, criterion) = layer_configs[linear_layer]
 
-            if set_rank is not None and criterionc is not None:
+            if set_rank is not None and criterion is not None:
                 raise Exception("Can't have both pre-set rank and criterion for a layer")
             elif criterion is not None:
                 rank = svd_rank_linear(linear_layer, criterion)
             elif set_rank is not None:
-                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+                rank = min(set_rank, dim[1])
             elif set_rank is None and criterion is None:
                 print("\tExcluding layer")
                 continue
@@ -338,7 +364,7 @@ def depthwise_decompose_model(model, layer_configs):
             linear_layer = module
             print(linear_layer)
 
-            (set_rank, criterion) = layer_configs[conv_layer]
+            (set_rank, criterion) = layer_configs[linear_layer]
 
             if set_rank is not None and criterionc is not None:
                 raise Exception("Can't have both pre-set rank and criterion for a layer")
@@ -362,7 +388,7 @@ def depthwise_decompose_model(model, layer_configs):
 def spatial_decompose_model(model, layer_configs):
     '''
     a single NxCxHxW low-rank filter is decoupled
-    into a RxCxVxW kernel and a NxRxWxH kernel
+    into a RxCx1xW kernel and a NxRxHx1 kernel
     '''
     for name, module in model._modules.items():
         if len(list(module.children())) > 0:
@@ -385,7 +411,7 @@ def spatial_decompose_model(model, layer_configs):
             elif criterion is not None:
                 rank = svd_rank_spatial(conv_layer, criterion)
             elif set_rank is not None:
-                rank = min(set_rank, min(dim[2]*dim[3], dim[1]))
+                rank = min(set_rank, dim[1])
             elif set_rank is None and criterion is None:
                 print("\tExcluding layer")
                 continue
@@ -397,7 +423,7 @@ def spatial_decompose_model(model, layer_configs):
             linear_layer = module
             print(linear_layer)
 
-            (set_rank, criterion) = layer_configs[conv_layer]
+            (set_rank, criterion) = layer_configs[linear_layer]
 
             if set_rank is not None and criterionc is not None:
                 raise Exception("Can't have both pre-set rank and criterion for a layer")
