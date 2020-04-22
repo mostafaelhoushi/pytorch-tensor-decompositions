@@ -24,7 +24,9 @@ def main():
 
         '''
         correlations = [pearsonr(wf.flatten(), wl.flatten()).item() for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
-        #cosine_similarity = [torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()) for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
+        cosine_similarity = [torch.nn.functional.cosine_similarity(wf.flatten(), wl.flatten()) for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights'])]
+        pairwise_distance = [torch.mean(torch.nn.functional.pairwise_distance(wf, wl)).item() for wf, wl in zip(before_decomp_record['weights'], after_training_decomp_record['weights'])]
+
         for wf, wl in zip(after_decomp_record['weights'], after_training_decomp_record['weights']):
             wf.flatten()
             wl.flatten()
