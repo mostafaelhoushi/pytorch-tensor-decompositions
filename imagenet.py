@@ -50,11 +50,11 @@ model_names = default_model_names + customized_models_names
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
-                        ' (default: resnet50)')
+                        ' (default: resnet18)')
 parser.add_argument('--model', default='', type=str, metavar='MODEL_PATH',
                     help='path to model file to load both its architecture and weights (default: none)')
 parser.add_argument('--weights', default='', type=str, metavar='WEIGHTS_PATH',
@@ -135,7 +135,7 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 parser.add_argument('--save-model', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='For Saving the current Model (default: True)')
-parser.add_argument('--print-weights', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
+parser.add_argument('--print-weights', default=True, type=lambda x:bool(distutils.util.strtobool(x)), 
                     help='For printing the weights of Model (default: True)')
 parser.add_argument('--desc', type=str, default=None,
                     help='description to append to model directory name')
@@ -489,7 +489,8 @@ def main_worker(gpu, ngpus_per_node, args):
             best_acc1 = max(acc1, best_acc1)
 
             if (args.print_weights):
-                with open(os.path.join(model_dir, 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
+                os.makedirs(os.path.join(model_dir, 'weights_logs'), exist_ok=True)
+                with open(os.path.join(model_dir, 'weights_logs', 'weights_log_' + str(epoch) + '.txt'), 'w') as weights_log_file:
                     with redirect_stdout(weights_log_file):
                         # Log model's state_dict
                         print("Model's state_dict:")
@@ -638,7 +639,8 @@ def save_checkpoint(state, is_best, dir_path, filename='checkpoint.pth.tar'):
         shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'model_best.pth.tar'))
 
     if (state['epoch']-1)%10 == 0:
-        shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))
+        os.makedirs(os.path.join(dir_path, 'checkpoints'), exist_ok=True)
+        shutil.copyfile(os.path.join(dir_path, filename), os.path.join(dir_path, 'checkpoints', 'checkpoint_' + str(state['epoch']-1) + '.pth.tar'))    
 
 
 class AverageMeter(object):
