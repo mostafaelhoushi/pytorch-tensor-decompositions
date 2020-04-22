@@ -75,9 +75,12 @@ def decompose_model(model, type, config):
     if config["rank"] is not None and config["threshold"] is not None:
         raise Exception("Either threshold or rank can be set. Not both.")
     elif config["rank"] is None:
-        if config["threshold"] is None:
-            config["threshold"] = 0.85
-        config["criterion"] = EnergyThreshold(config["threshold"])
+        if type in ["tucker", "cp"]:
+            config["criterion"] = VBMF
+        else:
+            if config["threshold"] is None:
+                config["threshold"] = 0.85
+            config["criterion"] = EnergyThreshold(config["threshold"])
 
     layer_configs = get_per_layer_config(model, config, type)
     
@@ -125,7 +128,7 @@ def get_per_layer_config(model, config, decomp_type, passed_first_conv=False):
             elif enable_current_conv is False:
                 layer_configs.update({conv_layer: (None, None)})
             elif current_conv_rank is None:
-                layer_configs.update({conv_layer: (None, criterion)})
+                layer_configs.update({conv_layer: (None, config["criterion"])})
             elif current_conv_rank is not None:
                 layer_configs.update({conv_layer: (current_conv_rank, None)})
                 
