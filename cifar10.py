@@ -580,7 +580,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 # Log model's state_dict
                 print("Model's state_dict:")
                 # TODO: Use checkpoint above
-                for param_tensor in model_rounded.state_dict():
+                for param_tensor in model.state_dict():
                     print(param_tensor, "\t", model.state_dict()[param_tensor].size())
                     print(model.state_dict()[param_tensor])
                     print("")
