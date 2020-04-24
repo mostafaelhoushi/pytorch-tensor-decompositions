@@ -141,7 +141,7 @@ def get_per_layer_config(model, config, decomp_type, passed_first_conv=False):
             if config["exclude_linears"] is True:
                 layer_configs.update({linear_layer: (None, None)})
             else:
-                layer_configs.update({linear_layer: (None, criterion)})
+                layer_configs.update({linear_layer: (None, config["criterion"])})
 
     return layer_configs
 
@@ -600,7 +600,7 @@ def svd_rank_channel(conv_layer, criterion=EnergyThreshold(0.85)):
     return valid_idx
 
 def svd_rank_spatial(conv_layer, criterion=EnergyThreshold(0.85)):
-    param = module.weight.data
+    param = conv_layer.weight.data
     dim = param.size()    
     
     VH = param.permute(1, 2, 0, 3).contiguous().view(dim[1] * dim[2], -1)
