@@ -7,6 +7,7 @@ import warnings
 import sys
 import csv
 import distutils
+import math
 from contextlib import redirect_stdout
 from collections import OrderedDict
 
@@ -96,10 +97,12 @@ parser.add_argument('-bm', '--batch-multiplier', default=1, type=int,
                          'effective batch size is batch-size * batch-multuplier')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--lr-schedule', dest='lr_schedule', default=False, type=lambda x:bool(distutils.util.strtobool(x)), 
-                    help='using learning rate schedule')
+parser.add_argument('--lr-schedule', dest='lr_schedule', default='StepLR', choices=['None', 'StepLR', 'MultiStepLR', 'LinearLR', 'CosineAnnealingLR'], 
+                    help='specify learning rate schedule')
 parser.add_argument('--lr-step-size', dest='lr_step_size', default=30, type=int,
                     help='number of epochs before decaying learning rate by 0.1')
+parser.add_argument('--lr-count-type', dest='lr_count_type', default='epoch', choices=['epoch', 'iteration'],
+                    help='whether to count epochs or iterations when updating learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
@@ -467,7 +470,6 @@ def main_worker(gpu, ngpus_per_node, args):
         for epoch in range(args.start_epoch, args.epochs):
             if args.distributed:
                 train_sampler.set_epoch(epoch)
-            adjust_learning_rate(optimizer, epoch, args.lr, args.lr_step_size)
 
             # train for one epoch
             print("current lr ", [param['lr'] for param in  optimizer.param_groups])
@@ -553,6 +555,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     sub_batch_count = args.batch_multiplier
     end = time.time()
     for i, (input, target) in enumerate(train_loader):
+        adjust_learning_rate(optimizer, epoch, args.lr, args.lr_schedule, gamma=args.lr_step_size, count_by=args.lr_count_type, max_epochs=args.epochs, iter_per_epoch=len(train_loader), iteration=i)
+
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -684,9 +688,40 @@ class ProgressMeter(object):
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
 
 
-def adjust_learning_rate(optimizer, epoch, initial_lr, step_size=30):
-    """Sets the learning rate to the initial LR decayed by 10 every step_size epochs"""
-    lr = initial_lr * (0.1 ** (epoch // step_size))
+def adjust_learning_rate(optimizer, epoch, initial_lr, lr_schedule='StepLR', gamma=0.1, step_size=30, steps=[], count_by='epochs', max_epochs=200, iteration=None, iter_per_epoch=None, warmup=False):
+    warmup_epoch = 5 if warmup else 0
+    
+    if count_by == 'epoch':
+        ratio = max(epoch - warmup_epoch, 0) / step_size
+    elif count_by == 'iteration':
+        warmup_iter = warmup_epoch * iter_per_epoch
+        current_iter = iteration + epoch * iter_per_epoch
+        max_iter = max_epochs * iter_per_epoch
+
+        ratio = max(current_iter - warmup_iter, 0) / (max_iter - warmup_iter)
+    else:
+        raise Exception('Unsupported or invalid count_by type: ', count_by)
+
+    if lr_schedule in ['StepLR']:
+        ratio = round(ratio)
+    
+    if lr_schedule=='None':
+        lr = initial_lr
+    elif lr_schedule=='StepLR':
+        lr = initial_lr * (gamma ** ratio)
+    elif lr_schedule == 'MultiStepLR':
+        if count_by == 'epoch':
+            count = sum([1 for s in steps if s <= epoch])
+        elif count_by == 'iteration':
+            count = sum([1 for s in steps if s <= current_iter])
+        lr = initial_lr * pow(gamma, count)
+    elif lr_schedule == 'LinearLR':
+        lr = initial_lr * (1 - ratio)
+    elif lr_schedule == 'CosineAnnealingLR':
+        lr = initial_lr * (1 + math.cos(math.pi * ratio)) / 2
+    else:
+        raise Exception('Unsupported or invalid lr_schedule type: ', lr_schedule)
+
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
