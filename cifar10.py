@@ -486,7 +486,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         with open(os.path.join(model_dir, "train_log.csv"), "w") as train_log_file:
             train_log_csv = csv.writer(train_log_file)
-            train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
+            train_log_csv.writerow(['epoch', 'train_loss', 'train_top1_acc', 'train_time', 'grad_first_layer', 'test_loss', 'test_top1_acc', 'test_time', 'cumulative_time'])
 
         # initialize lr scheduler according to start_epoch
         if (args.lr_schedule):
@@ -530,7 +530,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # append to log
             with open(os.path.join(model_dir, "train_log.csv"), "a") as train_log_file:
                 train_log_csv = csv.writer(train_log_file)
-                train_log_csv.writerow(((epoch,) + train_epoch_log + val_epoch_log + (time.time() - start_log_time,))) 
+                train_log_csv.writerow(((epoch,) + tuple(train_epoch_log.values()) + val_epoch_log + (time.time() - start_log_time,))) 
 
             # remember best acc@1 and save checkpoint
             is_best = acc1 > best_acc1
@@ -592,6 +592,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
+    grads_mean_abs_first_layer = AverageMeter('Grad Abs Mean', ':6.3f')
     progress = ProgressMeter(len(train_loader), batch_time, data_time, losses, top1,
                              prefix="Epoch: [{}]".format(epoch))
 
@@ -620,6 +621,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         top1.update(acc1[0], input.size(0))
         top5.update(acc5[0], input.size(0))
 
+        grads_mean_abs_first_layer.update(next(model.parameters(), None).grad.abs().mean(), input.size(0))
+
         if sub_batch_count == 0:
             # compute gradient and do SGD step
             optimizer.step()
@@ -635,7 +638,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         sub_batch_count -= 1
     
-    return (losses.avg, top1.avg.cpu().numpy(), batch_time.avg)
+    return {'losses': losses.avg, 'top1': top1.avg.cpu().numpy(), 'batch_time': batch_time.avg, 'grad_first_layer': grads_mean_abs_first_layer.avg.cpu().numpy()}
 
 
 def validate(val_loader, model, criterion, args):

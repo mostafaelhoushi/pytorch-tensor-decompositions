@@ -474,8 +474,6 @@ def main_worker(gpu, ngpus_per_node, args):
             # train for one epoch
             print("current lr ", [param['lr'] for param in  optimizer.param_groups])
             train_epoch_log = train(train_loader, model, criterion, optimizer, epoch, args)
-            if (args.lr_schedule):
-                lr_scheduler.step()
 
             # evaluate on validation set
             val_epoch_log = validate(val_loader, model, criterion, args)
